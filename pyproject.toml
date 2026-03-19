@@ -1,0 +1,28 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.isort]
+known-first-party = ["shared"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+strict = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["services", "shared"]
+
+[tool.uv.workspace]
+members = [
+    "services/ingestion-pipeline",
+    "services/api-server",
+    "services/feature-feed",
+    "services/feature-briefing",
+    "services/feature-video",
+    "services/feature-arc",
+    "services/feature-vernacular",
+]

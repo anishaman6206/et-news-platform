@@ -1,0 +1,67 @@
+# Claude Code
+CLAUDE.md
+**/CLAUDE.md
+.claude/
+.mcp.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+frontend/.env.production
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+.venv/
+**/.venv/
+venv/
+env/
+*.egg-info/
+**/*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.mypy_cache/
+.ruff_cache/
+
+# Cache directories
+.cache/
+**/.cache/
+embeddings_cache/
+
+# Test artifacts
+.pytest_cache/
+**/.pytest_cache/
+htmlcov/
+.coverage
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data / models
+*.bin
+*.pkl
+*.pt
+*.log

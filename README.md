@@ -13,7 +13,7 @@ AI-generated audio to ET readers.
 | # | Feature | Service | Status |
 |---|---|---|---|
 | 1 | **Vernacular Engine** — translate ET articles to Hindi, Tamil, Telugu, Bengali | `feature-vernacular` | **Done** |
-| 2 | **Personalised Feed** — rank articles by reader interest using semantic similarity | `feature-feed` | In progress |
+| 2 | **Personalised Feed** — rank articles by reader interest using semantic similarity | `feature-feed` | **Done** |
 | 3 | **News Navigator** — RAG-powered briefings: ask any financial question, get sourced answers | `feature-briefing` | In progress |
 | 4 | **Story Arc Tracker** — NER + entity knowledge graph + sentiment trends over time | `feature-arc` | In progress |
 | 5 | **AI Video Studio** — auto-generate broadcast-style audio summaries via OpenAI TTS | `feature-video` | In progress |
@@ -55,7 +55,7 @@ et-news-platform/
 ├── services/
 │   ├── ingestion-pipeline/   # Kafka consumer -> embed -> Qdrant
 │   ├── api-server/           # FastAPI main backend (port 8000)
-│   ├── feature-feed/         # Personalised ranking (port 8001)
+│   ├── feature-feed/         # Personalised ranking (port 8011)
 │   ├── feature-briefing/     # RAG briefings (port 8002)
 │   ├── feature-video/        # OpenAI TTS audio (port 8003)
 │   ├── feature-arc/          # NER + Neo4j + sentiment (port 8004)
@@ -207,6 +207,74 @@ tests/test_translator.py::TestTranslateEndpoint::test_translate_calls_pipeline  
 
 ---
 
+## Feature 2: Personalised Feed (Implemented)
+
+Ranks articles for each user using semantic similarity between the
+user's interest vector and article embeddings stored in Qdrant.
+
+**How it works:**
+1. Onboarding: user provides role, sectors, tickers → mapped to seed phrases → embedded via text-embedding-3-small → initial interest vector
+2. Every engagement (open, scroll, share, skip) updates the vector using EMA (α=0.15) — recent behaviour dominates
+3. Feed request: Qdrant ANN retrieves top 200 candidates → reranked by:
+   `0.6×cosine_similarity + 0.3×recency_score + 0.1×diversity_penalty`
+4. Returns top 20 articles personalised to that user
+
+**Engagement signals:** opened(0.3), scroll_50(0.5), scroll_100(0.8), shared(1.0), skipped(−0.2)
+
+### Run locally
+
+```bash
+cd services/feature-feed
+
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt
+
+# Windows
+set OPENAI_API_KEY=your-key-here
+# macOS / Linux
+export OPENAI_API_KEY=your-key-here
+
+uvicorn main:app --reload --port 8011
+```
+
+### Test it
+
+```bash
+# Health check
+curl http://localhost:8011/health
+
+# Onboard a new user
+curl -X POST http://localhost:8011/onboard \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"u1","role":"investor","sectors":["banking"],"tickers":["HDFC"]}'
+
+# Get personalised feed
+curl http://localhost:8011/feed/u1
+
+# Send engagement signal
+curl -X POST http://localhost:8011/engage \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"u1","article_id":1,"signal":"shared"}'
+```
+
+Interactive API docs: **http://localhost:8011/docs**
+
+### Run unit tests
+
+```bash
+cd services/feature-feed
+pytest tests/ -v
+# 6/6 tests passing
+```
+
+---
+
 ## Environment Variables
 
 ```bash
@@ -225,10 +293,6 @@ to be changed during development.
 ---
 
 ## Features Coming Next
-
-### Feature 2: Personalised Feed (`feature-feed`, port 8001)
-Ranks articles for each user by embedding their interest topics and running
-cosine similarity search against the Qdrant article index.
 
 ### Feature 3: News Navigator Briefings (`feature-briefing`, port 8002)
 RAG pipeline: semantic retrieval from Qdrant + GPT-4o generation.

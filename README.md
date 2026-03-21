@@ -14,7 +14,7 @@ AI-generated audio to ET readers.
 |---|---|---|---|
 | 1 | **Vernacular Engine** — translate ET articles to Hindi, Tamil, Telugu, Bengali | `feature-vernacular` | **Done** |
 | 2 | **Personalised Feed** — rank articles by reader interest using semantic similarity | `feature-feed` | **Done** |
-| 3 | **News Navigator** — RAG-powered briefings: ask any financial question, get sourced answers | `feature-briefing` | In progress |
+| 3 | **News Navigator** — RAG-powered briefings: ask any financial question, get sourced answers | `feature-briefing` | **Done** |
 | 4 | **Story Arc Tracker** — NER + entity knowledge graph + sentiment trends over time | `feature-arc` | In progress |
 | 5 | **AI Video Studio** — auto-generate broadcast-style audio summaries via OpenAI TTS | `feature-video` | In progress |
 
@@ -275,6 +275,57 @@ pytest tests/ -v
 
 ---
 
+## Feature 3: News Navigator Briefings (Implemented)
+
+RAG pipeline that synthesises multiple ET articles on a topic into a
+single structured briefing with source citations. Ask follow-up
+questions and get answers grounded strictly in ET content.
+
+**How it works:**
+1. Hybrid retrieval: semantic search (Qdrant) + keyword matching → merged with RRF (Reciprocal Rank Fusion, k=60)
+2. Jaccard deduplication removes near-identical articles (threshold 0.60)
+3. GPT-4o generates structured JSON briefing with source_ids citing which articles support each claim
+4. Redis cache (TTL 6h) — identical topic queries served instantly
+5. `/briefing/ask` answers questions strictly from retrieved articles only
+
+### Run locally
+
+```bash
+cd services/feature-briefing
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+set OPENAI_API_KEY=your-key   # Windows
+uvicorn main:app --reload --port 8002
+```
+
+### Test it
+
+```bash
+# Health
+curl http://localhost:8002/health
+
+# Generate briefing
+curl "http://localhost:8002/briefing/generate?topic=RBI+repo+rate"
+
+# Ask a question
+curl -X POST http://localhost:8002/briefing/ask \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"RBI repo rate","question":"What does this mean for home loans?"}'
+```
+
+Interactive API docs: **http://localhost:8002/docs**
+
+### Run unit tests
+
+```bash
+cd services/feature-briefing
+pytest tests/ -v
+# 7/7 tests passing
+```
+
+---
+
 ## Environment Variables
 
 ```bash
@@ -293,11 +344,6 @@ to be changed during development.
 ---
 
 ## Features Coming Next
-
-### Feature 3: News Navigator Briefings (`feature-briefing`, port 8002)
-RAG pipeline: semantic retrieval from Qdrant + GPT-4o generation.
-Ask *"What is RBI's stance on inflation this quarter?"* and get a sourced,
-structured briefing with citations.
 
 ### Feature 4: Story Arc Tracker (`feature-arc`, port 8004)
 Runs spaCy NER on every article, stores entity co-occurrence relationships

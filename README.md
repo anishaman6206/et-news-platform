@@ -15,7 +15,7 @@ AI-generated audio to ET readers.
 | 1 | **Vernacular Engine** — translate ET articles to Hindi, Tamil, Telugu, Bengali | `feature-vernacular` | **Done** |
 | 2 | **Personalised Feed** — rank articles by reader interest using semantic similarity | `feature-feed` | **Done** |
 | 3 | **News Navigator** — RAG-powered briefings: ask any financial question, get sourced answers | `feature-briefing` | **Done** |
-| 4 | **Story Arc Tracker** — NER + entity knowledge graph + sentiment trends over time | `feature-arc` | In progress |
+| 4 | **Story Arc Tracker** — NER + entity knowledge graph + sentiment trends over time | `feature-arc` | **Done** |
 | 5 | **AI Video Studio** — auto-generate broadcast-style audio summaries via OpenAI TTS | `feature-video` | In progress |
 
 ---
@@ -326,6 +326,64 @@ pytest tests/ -v
 
 ---
 
+## Feature 4: Story Arc Tracker (Implemented)
+
+Tracks ongoing news stories by building an entity knowledge graph
+in Neo4j, scoring sentiment over time with GPT-4o-mini, and
+generating AI predictions about future developments.
+
+**How it works:**
+1. POST /arc/process: runs full pipeline on each article:
+   - spaCy NER extracts entities (ORG, PERSON, GPE, MONEY, PERCENT)
+   - Entity normalization: strips "The/the", applies alias resolution
+   - Neo4j: MERGE Entity nodes + CO_OCCURS edges (weight = co-occurrence count)
+   - GPT-4o-mini scores sentiment (0.0-1.0, label, reason)
+   - PostgreSQL stores sentiment record with pub_date
+2. GET /arc/{topic}: assembles full story arc:
+   - Timeline of all articles with sentiment scores
+   - Top entities by connection count from Neo4j
+   - Sentiment trend: improving/declining/stable
+   - GPT-4o predictions (requires 2+ articles)
+
+### Run locally
+
+```bash
+cd services/feature-arc
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+set OPENAI_API_KEY=your-key
+set DATABASE_URL=postgresql://postgres:postgres@localhost:5432/etnews
+uvicorn main:app --reload --port 8004
+```
+
+### Test it
+
+```bash
+# Health
+curl http://localhost:8004/health
+
+# Process an article
+curl -X POST http://localhost:8004/arc/process \
+  -H "Content-Type: application/json" \
+  -d '{"article_id":"001","topic":"RBI","text":"RBI kept repo rate at 6.5%...","pub_date":"2026-03-20"}'
+
+# Get story arc (process 2+ articles first)
+curl http://localhost:8004/arc/RBI
+```
+
+Interactive API docs: **http://localhost:8004/docs**
+
+### Run unit tests
+
+```bash
+pytest tests/ -v
+# 8/8 tests passing
+```
+
+---
+
 ## Environment Variables
 
 ```bash
@@ -344,11 +402,6 @@ to be changed during development.
 ---
 
 ## Features Coming Next
-
-### Feature 4: Story Arc Tracker (`feature-arc`, port 8004)
-Runs spaCy NER on every article, stores entity co-occurrence relationships
-in Neo4j, and uses GPT-4o-mini for structured sentiment scoring.
-Enables queries like *"Show me all articles mentioning Adani and their sentiment trend."*
 
 ### Feature 5: AI Video Studio (`feature-video`, port 8003)
 Celery pipeline that turns any article or briefing into a broadcast-ready MP3:

@@ -8,6 +8,26 @@ AI-generated audio to ET readers.
 
 ---
 
+## Quick Start
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/YOUR_USERNAME/et-news-platform.git
+cd et-news-platform
+
+# 2. Copy env file and add your OpenAI API key
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY=sk-proj-...
+
+# 3. Start everything (Windows)
+.\start-all.ps1
+
+# 4. Open the dashboard
+# http://localhost:3000
+```
+
+---
+
 ## Planned Features
 
 | # | Feature | Service | Status |
@@ -563,6 +583,32 @@ cd services/feature-video && uvicorn main:app --port 8003
 | News Navigator | 8002 | http://localhost:8002/docs |
 | Story Arc Tracker | 8004 | http://localhost:8004/docs |
 | AI Video Studio | 8003 | http://localhost:8003/docs |
+
+---
+
+## Frontend
+
+Next.js 14 dashboard with pages for all 5 features.
+
+### Run the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+# Opens at http://localhost:3000
+```
+
+### Pages
+
+| Page | URL | Feature |
+|---|---|---|
+| Home | / | Service health dashboard |
+| Vernacular | /vernacular | Translate articles to Hindi/Tamil/Telugu/Bengali |
+| Feed | /feed | Personalised article feed with engagement tracking |
+| Briefing | /briefing | AI briefings with source citations and Q&A |
+| Story Arc | /arc | Entity graph, sentiment timeline, predictions |
+| Video Studio | /video | Generate broadcast MP4 videos from articles |
 
 ---
 

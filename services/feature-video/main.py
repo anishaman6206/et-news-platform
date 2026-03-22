@@ -178,14 +178,15 @@ def _draw_centered_text(
     max_chars: int = 45,
 ) -> None:
     wrapped = textwrap.fill(text, width=max_chars)
-    draw.multiline_text(
-        (FRAME_W // 2, y_center),
-        wrapped,
-        fill=fill,
-        font=font,
-        anchor="mm",
-        align="center",
-    )
+    # Use multiline_textbbox to measure, then draw at explicit (x, y).
+    # Avoids anchor="mm" which fails on some Pillow builds when the font
+    # or text content triggers a different code path (e.g. long Unicode strings).
+    bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center")
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    x = (FRAME_W - text_w) // 2
+    y = y_center - text_h // 2
+    draw.multiline_text((x, y), wrapped, fill=fill, font=font, align="center")
 
 
 def create_scene_frame(scene: dict, output_path: Path) -> None:
@@ -203,7 +204,7 @@ def create_scene_frame(scene: dict, output_path: Path) -> None:
     elif scene_type == "narration":
         # ET logo placeholder — red rectangle top-left
         draw.rectangle([20, 20, 110, 65], fill="#D42B2B")
-        draw.text((65, 42), "ET", fill="white", font=_get_font(32), anchor="mm")
+        draw.text((52, 30), "ET", fill="white", font=_get_font(32))
         # Body text
         font = _get_font(38)
         _draw_centered_text(draw, scene.get("spoken", ""), FRAME_H // 2, "#1A1A1A", font, max_chars=52)
@@ -266,53 +267,63 @@ def assemble_video(
     narration_path: Path,
     output_path: Path,
 ) -> None:
-    """Build output.mp4 from per-scene frames + concatenated narration audio."""
+    """Build output.mp4 using FFmpeg filter_complex concat.
+
+    Feeds each frame image directly as a timed input — no intermediate clip
+    files, no clips_list.txt.  This sidesteps every Windows path issue with
+    the concat demuxer (drive-letter colon parsed as URL scheme, backslash
+    in list file, BOM/CRLF encoding).
+
+    FFmpeg command structure (n=3 example):
+        ffmpeg -y
+          -loop 1 -t 3  -i frame_1.png
+          -loop 1 -t 15 -i frame_2.png
+          -loop 1 -t 6  -i frame_3.png
+          -i narration.mp3
+          -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1:a=0[outv]"
+          -map [outv] -map 3:a
+          -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest
+          output.mp4
+    """
     if not _ffmpeg_available:
         raise RuntimeError(
             "FFmpeg is not available. Install FFmpeg and add to PATH before running."
         )
+    if not frame_paths:
+        raise RuntimeError("No frame images to assemble — frame_paths is empty")
 
-    job_dir = output_path.parent
+    n = len(frame_paths)
 
-    # Step 1: create a short silent video clip per scene (loop frame for duration_s)
-    clip_paths: list[Path] = []
+    # Build -loop/-t/-i inputs for every scene frame (absolute paths)
+    video_inputs: list[str] = []
     for scene, frame_path in zip(scenes, frame_paths):
         duration = int(scene.get("duration_s", 5))
-        clip_path = job_dir / f"clip_{scene['scene_id']}.mp4"
-        _ffmpeg([
-            "ffmpeg", "-y",
-            "-loop", "1", "-t", str(duration), "-i", _fwd(frame_path),
+        video_inputs += ["-loop", "1", "-t", str(duration), "-i", _fwd(frame_path.resolve())]
+
+    # Audio input comes after all video inputs (index n)
+    audio_input = ["-i", _fwd(narration_path.resolve())]
+
+    # filter_complex: concat all video streams, pass audio through
+    concat_filter = "".join(f"[{i}:v]" for i in range(n)) + f"concat=n={n}:v=1:a=0[outv]"
+
+    cmd = (
+        ["ffmpeg", "-y"]
+        + video_inputs
+        + audio_input
+        + [
+            "-filter_complex", concat_filter,
+            "-map", "[outv]",
+            "-map", f"{n}:a",
             "-c:v", "libx264", "-tune", "stillimage",
             "-pix_fmt", "yuv420p", "-r", "24",
-            _fwd(clip_path),
-        ])
-        clip_paths.append(clip_path)
-        log.debug("Clip created: %s", clip_path)
-
-    # Step 2: concatenate all clips → video_only.mp4
-    # Use forward-slash paths inside clips_list.txt — FFmpeg concat demuxer
-    # rejects backslashes on Windows even when -safe 0 is set.
-    concat_list = job_dir / "clips_list.txt"
-    concat_list.write_text(
-        "\n".join(f"file '{_fwd(p)}'" for p in clip_paths) + "\n"
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            _fwd(output_path.resolve()),
+        ]
     )
-    video_only = job_dir / "video_only.mp4"
-    _ffmpeg([
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", _fwd(concat_list),
-        "-c", "copy", _fwd(video_only),
-    ])
 
-    # Step 3: mux video_only + narration.mp3 → output.mp4
-    _ffmpeg([
-        "ffmpeg", "-y",
-        "-i", _fwd(video_only),
-        "-i", _fwd(narration_path),
-        "-c:v", "copy",
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
-        _fwd(output_path),
-    ])
+    log.info("Assembling video: %d scenes → %s", n, output_path)
+    _ffmpeg(cmd)
     log.info("Video assembled: %s", output_path)
 
 
@@ -371,9 +382,18 @@ def run_job(job_id: str, article_id: str, title: str, text: str) -> None:
         try:
             create_scene_frame(scene, frame_path)
             frame_paths.append(frame_path)
-        except Exception as exc:
-            log.warning("Job %s: frame creation failed for scene %d: %s", job_id, scene["scene_id"], exc)
+        except Exception:
+            # log.exception prints the full traceback — critical for diagnosing
+            # silent Pillow failures (anchor bugs, font issues, Unicode, etc.)
+            log.exception("Job %s: frame creation failed for scene %d", job_id, scene.get("scene_id"))
 
+    if not frame_paths:
+        msg = "All frame renders failed — check logs above for Pillow traceback"
+        log.error("Job %s: %s", job_id, msg)
+        _update_job(job_id, status="failed", error=msg)
+        return
+
+    log.info("Job %s: created %d/%d frames", job_id, len(frame_paths), len(scenes))
     _update_job(job_id, progress=75)
 
     # 5. Video assembly

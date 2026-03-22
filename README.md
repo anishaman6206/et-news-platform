@@ -16,7 +16,7 @@ AI-generated audio to ET readers.
 | 2 | **Personalised Feed** — rank articles by reader interest using semantic similarity | `feature-feed` | **Done** |
 | 3 | **News Navigator** — RAG-powered briefings: ask any financial question, get sourced answers | `feature-briefing` | **Done** |
 | 4 | **Story Arc Tracker** — NER + entity knowledge graph + sentiment trends over time | `feature-arc` | **Done** |
-| 5 | **AI Video Studio** — auto-generate broadcast-style audio summaries via OpenAI TTS | `feature-video` | In progress |
+| 5 | **AI Video Studio** — auto-generate broadcast-style audio summaries via OpenAI TTS | `feature-video` | **Done** |
 
 ---
 
@@ -42,7 +42,7 @@ AI-generated audio to ET readers.
               |                        |
     +---------v------+    +------------v-------+
     | feature-video  |    | feature-vernacular |
-    | (OpenAI TTS)   |    | (GPT-4o translate) |  <-- IMPLEMENTED
+    | (OpenAI TTS)   |    | (GPT-4o translate) |  <-- ALL DONE
     +----------------+    +--------------------+
 
   Kafka --> ingestion-pipeline --> Qdrant (vectors) + Postgres
@@ -59,7 +59,7 @@ et-news-platform/
 │   ├── feature-briefing/     # RAG briefings (port 8002)
 │   ├── feature-video/        # OpenAI TTS audio (port 8003)
 │   ├── feature-arc/          # NER + Neo4j + sentiment (port 8004)
-│   └── feature-vernacular/   # Translation engine (port 8005)  <-- DONE
+│   └── feature-vernacular/   # Translation engine (port 8005)
 ├── frontend/                 # Next.js 14 + TypeScript (port 3000)
 ├── shared/                   # llm_client.py, vector_store.py, kafka_client.py
 ├── docker-compose.yml
@@ -384,6 +384,65 @@ pytest tests/ -v
 
 ---
 
+## Feature 5: AI Video Studio (Implemented)
+
+Converts any ET article into a broadcast-style MP4 video with
+AI-generated narration audio. GPT-4o writes the script, OpenAI
+TTS synthesises the voice, Pillow renders the frames, FFmpeg
+assembles the final video.
+
+**How it works:**
+1. GPT-4o generates a scene manifest: title_card, narration, data_callout scenes with durations totalling 45-90 seconds
+2. OpenAI TTS (tts-1, alloy voice) generates MP3 audio per scene
+3. pydub concatenates scene audio into one narration track
+4. Pillow renders a PNG frame per scene type
+5. FFmpeg assembles frames + audio into final MP4
+6. Async job system — POST returns job_id immediately, poll `/video/status/{job_id}` for progress
+
+**Prerequisites:** FFmpeg must be installed and on PATH.
+Windows: `winget install ffmpeg`
+
+### Run locally
+
+```bash
+cd services/feature-video
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+set OPENAI_API_KEY=your-key
+uvicorn main:app --reload --port 8003
+```
+
+### Test it
+
+```bash
+# Health (confirms FFmpeg detected)
+curl http://localhost:8003/health
+
+# Generate a video (returns job_id immediately)
+curl -X POST http://localhost:8003/video/generate \
+  -H "Content-Type: application/json" \
+  -d '{"article_id":"001","title":"RBI holds rate","text":"RBI kept repo rate at 6.5%..."}'
+
+# Poll status
+curl http://localhost:8003/video/status/{job_id}
+
+# Download when done
+curl http://localhost:8003/video/download/{job_id} --output video.mp4
+```
+
+Interactive API docs: **http://localhost:8003/docs**
+
+### Run unit tests
+
+```bash
+cd services/feature-video
+pytest tests/ -v
+# 7/7 tests passing
+```
+
+---
+
 ## Environment Variables
 
 ```bash
@@ -401,11 +460,39 @@ to be changed during development.
 
 ---
 
-## Features Coming Next
+## All Services Running
 
-### Feature 5: AI Video Studio (`feature-video`, port 8003)
-Celery pipeline that turns any article or briefing into a broadcast-ready MP3:
-GPT-4o writes the script, OpenAI TTS (`tts-1`) synthesises the audio.
+To run all 5 features simultaneously:
+
+```bash
+# Terminal 1 — infrastructure
+docker compose up qdrant neo4j redis kafka postgres -d
+
+# Terminal 2 — vernacular (port 8005)
+cd services/feature-vernacular && uvicorn main:app --port 8005
+
+# Terminal 3 — feed (port 8011)
+cd services/feature-feed && uvicorn main:app --port 8011
+
+# Terminal 4 — briefing (port 8002)
+cd services/feature-briefing && uvicorn main:app --port 8002
+
+# Terminal 5 — arc (port 8004)
+cd services/feature-arc && uvicorn main:app --port 8004
+
+# Terminal 6 — video (port 8003)
+cd services/feature-video && uvicorn main:app --port 8003
+```
+
+## API Documentation
+
+| Service | Port | Docs URL |
+|---|---|---|
+| Vernacular Engine | 8005 | http://localhost:8005/docs |
+| Personalised Feed | 8011 | http://localhost:8011/docs |
+| News Navigator | 8002 | http://localhost:8002/docs |
+| Story Arc Tracker | 8004 | http://localhost:8004/docs |
+| AI Video Studio | 8003 | http://localhost:8003/docs |
 
 ---
 

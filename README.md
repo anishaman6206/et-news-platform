@@ -135,6 +135,20 @@ Marathi (`mr`), Gujarati (`gu`), Kannada (`kn`), Malayalam (`ml`)
 5. Runs quality checks: length ratio [0.7–1.5], named entity presence
 6. Caches result in Redis (L1, TTL 24 h) and local file (L2) — no repeat API calls
 
+```mermaid
+flowchart LR
+  User --> |GET /translate| API
+  API --> |check| Redis[(Redis L1)]
+  Redis --> |cache hit| User
+  Redis --> |cache miss| Chunker
+  Chunker --> |800-token chunks| GPT4o[GPT-4o]
+  GPT4o --> |translated chunks| Merger
+  Merger --> |inject glossary terms| QA[Quality Check]
+  QA --> |store| Redis
+  QA --> |store| FileCache[(File L2)]
+  QA --> |translated article| User
+```
+
 ### Run locally
 
 ```bash
@@ -221,6 +235,19 @@ user's interest vector and article embeddings stored in Qdrant.
 
 **Engagement signals:** opened(0.3), scroll_50(0.5), scroll_100(0.8), shared(1.0), skipped(−0.2)
 
+```mermaid
+flowchart LR
+  User --> |POST /onboard| Onboard
+  Onboard --> |embed role+sectors+tickers| OpenAI[OpenAI Embeddings]
+  OpenAI --> |1536-d vector| Redis[(Redis uvec:user_id)]
+  User --> |POST /engage signal| EMA[EMA Update α=0.15]
+  EMA --> |updated vector| Redis
+  User --> |GET /feed/user_id| Ranker
+  Redis --> |user vector| Ranker
+  Qdrant[(Qdrant)] --> |top 200 candidates| Ranker
+  Ranker --> |rerank: cosine+recency+diversity| User
+```
+
 ### Run locally
 
 ```bash
@@ -288,6 +315,20 @@ questions and get answers grounded strictly in ET content.
 4. Redis cache (TTL 6h) — identical topic queries served instantly
 5. `/briefing/ask` answers questions strictly from retrieved articles only
 
+```mermaid
+flowchart LR
+  User --> |POST /briefing/generate| Retriever
+  Retriever --> |semantic search| Qdrant[(Qdrant)]
+  Retriever --> |keyword filter| Qdrant
+  Qdrant --> |two ranked lists| RRF[RRF Merge k=60]
+  RRF --> |top 15| Dedup[Jaccard Dedup 0.60]
+  Dedup --> |check| Redis[(Redis cache)]
+  Redis --> |cache hit| User
+  Redis --> |cache miss| GPT4o[GPT-4o]
+  GPT4o --> |structured JSON + source_ids| Redis
+  GPT4o --> |SSE stream| User
+```
+
 ### Run locally
 
 ```bash
@@ -345,6 +386,20 @@ generating AI predictions about future developments.
    - Sentiment trend: improving/declining/stable
    - GPT-4o predictions (requires 2+ articles)
 
+```mermaid
+flowchart LR
+  Article --> |POST /arc/process| NER[spaCy NER]
+  NER --> |canonical entities| Aliases[Alias Resolution]
+  Aliases --> |MERGE nodes+edges| Neo4j[(Neo4j Graph)]
+  Article --> |text| Sentiment[GPT-4o-mini Sentiment]
+  Sentiment --> |score + label| Postgres[(PostgreSQL)]
+  User --> |GET /arc/topic| Arc[Arc Assembly]
+  Postgres --> |timeline| Arc
+  Neo4j --> |key entities| Arc
+  Arc --> |arc_context| GPT4o[GPT-4o]
+  GPT4o --> |predictions + contrarian| User
+```
+
 ### Run locally
 
 ```bash
@@ -398,6 +453,21 @@ assembles the final video.
 4. Pillow renders a PNG frame per scene type
 5. FFmpeg assembles frames + audio into final MP4
 6. Async job system — POST returns job_id immediately, poll `/video/status/{job_id}` for progress
+
+```mermaid
+flowchart LR
+  User --> |POST /video/generate| Queue[Job Queue]
+  Queue --> |job_id| User
+  Queue --> |async thread| Script[GPT-4o Script]
+  Script --> |scene manifest| TTS[OpenAI TTS]
+  Script --> |scene manifest| Frames[Pillow Frames]
+  TTS --> |MP3 per scene| pydub[pydub concat]
+  Frames --> |PNG per scene| FFmpeg
+  pydub --> |narration.mp3| FFmpeg
+  FFmpeg --> |filter_complex concat| MP4[(MP4 output)]
+  User --> |GET /video/status/id| Queue
+  User --> |GET /video/download/id| MP4
+```
 
 **Prerequisites:** FFmpeg must be installed and on PATH.
 Windows: `winget install ffmpeg`

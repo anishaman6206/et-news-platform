@@ -1,19 +1,23 @@
 /**
  * Typed API client for all 5 ET AI News Platform services.
- * All service base URLs are driven by NEXT_PUBLIC_* env vars.
+ *
+ * All calls go through Next.js API route proxies (/api/*) to avoid
+ * browser CORS restrictions. The proxies forward to the actual
+ * service ports on the server side.
  */
 
-const SERVICES = {
-  vernacular: process.env.NEXT_PUBLIC_VERNACULAR_URL ?? "http://localhost:8005",
-  feed:       process.env.NEXT_PUBLIC_FEED_URL       ?? "http://localhost:8011",
-  briefing:   process.env.NEXT_PUBLIC_BRIEFING_URL   ?? "http://localhost:8002",
-  arc:        process.env.NEXT_PUBLIC_ARC_URL        ?? "http://localhost:8004",
-  video:      process.env.NEXT_PUBLIC_VIDEO_URL      ?? "http://localhost:8003",
-};
+// Proxy base paths — all relative so they work on any host
+const PROXY = {
+  vernacular: "/api/vernacular",
+  feed:       "/api/feed",
+  briefing:   "/api/briefing",
+  arc:        "/api/arc",
+  video:      "/api/video",
+} as const;
 
-export type ServiceName = keyof typeof SERVICES;
+export type ServiceName = keyof typeof PROXY;
 
-// ── Shared helper ──────────────────────────────────────────────────────────────
+// ── Shared fetch helper ────────────────────────────────────────────────────────
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -118,9 +122,9 @@ export interface VideoStatusResponse {
 
 // ── API functions ──────────────────────────────────────────────────────────────
 
-/** Ping a service /health endpoint. */
+/** Ping a service's /health endpoint via the Next.js proxy. */
 export async function healthCheck(service: ServiceName): Promise<HealthResponse> {
-  return apiFetch<HealthResponse>(`${SERVICES[service]}/health`);
+  return apiFetch<HealthResponse>(`${PROXY[service]}/health`);
 }
 
 // Vernacular ───────────────────────────────────────────────────────────────────
@@ -133,7 +137,7 @@ export async function translateArticle(
 ): Promise<TranslateResponse> {
   const params = new URLSearchParams({ article_id: articleId, lang, text });
   return apiFetch<TranslateResponse>(
-    `${SERVICES.vernacular}/translate?${params}`,
+    `${PROXY.vernacular}/translate?${params}`,
   );
 }
 
@@ -146,7 +150,7 @@ export async function onboardUser(
   sectors: string[],
   tickers: string[],
 ): Promise<OnboardResponse> {
-  return apiFetch<OnboardResponse>(`${SERVICES.feed}/onboard`, {
+  return apiFetch<OnboardResponse>(`${PROXY.feed}/onboard`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId, role, sectors, tickers }),
@@ -155,7 +159,7 @@ export async function onboardUser(
 
 /** Retrieve the personalised article feed for a user. */
 export async function getFeed(userId: string): Promise<FeedResponse> {
-  return apiFetch<FeedResponse>(`${SERVICES.feed}/feed/${userId}`);
+  return apiFetch<FeedResponse>(`${PROXY.feed}/feed/${userId}`);
 }
 
 /** Send an engagement signal (opened, scroll_50, scroll_100, shared, skipped). */
@@ -164,7 +168,7 @@ export async function engageArticle(
   articleId: string | number,
   signal: "opened" | "scroll_50" | "scroll_100" | "shared" | "skipped",
 ): Promise<void> {
-  await apiFetch<unknown>(`${SERVICES.feed}/engage`, {
+  await apiFetch<unknown>(`${PROXY.feed}/engage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId, article_id: articleId, signal }),
@@ -174,24 +178,21 @@ export async function engageArticle(
 // Briefing ─────────────────────────────────────────────────────────────────────
 
 /**
- * Open an SSE stream for /briefing/generate.
+ * Open an SSE stream for /briefing/generate via the Next.js stream proxy.
  * The caller is responsible for closing the EventSource.
  */
 export function generateBriefing(topic: string): EventSource {
   const params = new URLSearchParams({ topic });
-  return new EventSource(`${SERVICES.briefing}/briefing/generate?${params}`);
+  return new EventSource(`${PROXY.briefing}/stream?${params}`);
 }
 
 /**
- * Open an SSE stream for /briefing/ask.
- * Uses a POST-backed EventSource via fetch (SSE over POST).
- * Returns an EventSource-like object wrapping fetch + ReadableStream.
+ * Open an SSE stream for /briefing/ask via the Next.js stream proxy.
+ * The caller is responsible for closing the EventSource.
  */
 export function askBriefing(topic: string, question: string): EventSource {
   const params = new URLSearchParams({ topic, question });
-  return new EventSource(
-    `${SERVICES.briefing}/briefing/ask?${params}`,
-  );
+  return new EventSource(`${PROXY.briefing}/stream?${params}`);
 }
 
 // Arc ──────────────────────────────────────────────────────────────────────────
@@ -203,7 +204,7 @@ export async function processArcArticle(
   text: string,
   pubDate?: string,
 ): Promise<ArcProcessResponse> {
-  return apiFetch<ArcProcessResponse>(`${SERVICES.arc}/arc/process`, {
+  return apiFetch<ArcProcessResponse>(`${PROXY.arc}/arc/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -217,7 +218,9 @@ export async function processArcArticle(
 
 /** Retrieve the assembled story arc for a topic. */
 export async function getArc(topic: string): Promise<ArcResponse> {
-  return apiFetch<ArcResponse>(`${SERVICES.arc}/arc/${encodeURIComponent(topic)}`);
+  return apiFetch<ArcResponse>(
+    `${PROXY.arc}/arc/${encodeURIComponent(topic)}`,
+  );
 }
 
 // Video ────────────────────────────────────────────────────────────────────────
@@ -228,7 +231,7 @@ export async function generateVideo(
   title: string,
   text: string,
 ): Promise<VideoJobResponse> {
-  return apiFetch<VideoJobResponse>(`${SERVICES.video}/video/generate`, {
+  return apiFetch<VideoJobResponse>(`${PROXY.video}/video/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ article_id: articleId, title, text }),
@@ -238,11 +241,11 @@ export async function generateVideo(
 /** Poll the status of a video generation job. */
 export async function getVideoStatus(jobId: string): Promise<VideoStatusResponse> {
   return apiFetch<VideoStatusResponse>(
-    `${SERVICES.video}/video/status/${jobId}`,
+    `${PROXY.video}/video/status/${jobId}`,
   );
 }
 
-/** Return the direct download URL for a completed video job. */
+/** Return the proxied download URL for a completed video job. */
 export function getVideoDownloadUrl(jobId: string): string {
-  return `${SERVICES.video}/video/download/${jobId}`;
+  return `${PROXY.video}/video/download/${jobId}`;
 }

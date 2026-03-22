@@ -86,21 +86,24 @@ et-news-platform/
 └── .env.example
 ```
 
-### Tech stack
+## 🛠️ Tech Stack
 
-| Layer | Technology |
-|---|---|
-| LLM | OpenAI GPT-4o (generation, translation, sentiment) |
-| Embeddings | OpenAI text-embedding-3-small |
-| Audio | OpenAI TTS (tts-1) |
-| Vector store | Qdrant |
-| Graph database | Neo4j |
-| Cache / broker | Redis |
-| Message queue | Kafka |
-| Relational DB | PostgreSQL |
-| API framework | FastAPI |
-| Frontend | Next.js 14 + TypeScript + Tailwind |
-| Infra | Docker Compose |
+| Category | Technology | Purpose |
+|---|---|---|
+| **LLM** | OpenAI GPT-4o | Translation, briefings, script generation, predictions |
+| **LLM (fast)** | OpenAI GPT-4o-mini | Sentiment scoring (cost-efficient) |
+| **Embeddings** | text-embedding-3-small | Article and user interest vectors (1536-d) |
+| **Audio** | OpenAI TTS tts-1 | Narration synthesis for video studio |
+| **Vector DB** | Qdrant | Semantic article search, ANN retrieval |
+| **Graph DB** | Neo4j | Entity co-occurrence graph for story tracking |
+| **Cache** | Redis | User vectors, translated articles, briefings |
+| **Relational DB** | PostgreSQL + TimescaleDB | Sentiment time-series, article metadata |
+| **Message Queue** | Kafka | Article ingestion pipeline events |
+| **NLP** | spaCy en_core_web_sm | Named entity recognition |
+| **Video** | FFmpeg + Pillow + pydub | Frame rendering, audio synthesis, MP4 assembly |
+| **Backend** | FastAPI + Python 3.11 | All 5 microservices |
+| **Frontend** | Next.js 14 + TypeScript + Tailwind | Dashboard UI |
+| **Infra** | Docker Compose | Local development orchestration |
 
 ---
 
@@ -621,3 +624,20 @@ All Python services import from here — no duplicated SDK setup across services
 | `llm_client.py` | `complete()` (GPT-4o), `embed()`, `tts()`, `transcribe()` |
 | `vector_store.py` | Qdrant `upsert()` / `search()` with auto collection creation |
 | `kafka_client.py` | `produce()` / `consume()` generator |
+
+---
+
+## 🏆 Submission
+
+| Item | Status |
+|---|---|
+| GitHub Repository | ✅ Public, source code complete |
+| README with setup instructions | ✅ This document |
+| Commit history showing build process | ✅ 42+ commits with feat/fix/test/docs pattern |
+| 3-minute pitch video | ⏳ Recording in progress |
+| Architecture document | ✅ ARCHITECTURE.md |
+| Impact model | ✅ IMPACT_MODEL.md — ₹325 Cr annual impact |
+
+**Team:** Anish Aman
+**Problem Statement:** PS8 — AI-Native News Experience
+**Hackathon:** ET AI Hackathon 2026

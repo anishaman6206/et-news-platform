@@ -19,7 +19,7 @@ export async function GET(
         headers: {
           "Content-Type": res.headers.get("Content-Type") ?? "video/mp4",
           "Content-Disposition":
-            res.headers.get("Content-Disposition") ?? `attachment; filename="video.mp4"`,
+            res.headers.get("Content-Disposition") ?? `attachment; filename="et-news-video.mp4"`,
         },
       });
     }

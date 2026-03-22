@@ -12,7 +12,7 @@ AI-generated audio to ET readers.
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/et-news-platform.git
+git clone https://github.com/anishaman6206/et-news-platform.git
 cd et-news-platform
 
 # 2. Copy env file and add your OpenAI API key

@@ -10,6 +10,10 @@ The ET AI News Platform is an AI-native microservices system built for Economic 
 
 ---
 
+> **Note:** `api-server` and `ingestion-pipeline` are architected but
+> not implemented in this hackathon submission. The frontend calls feature
+> services directly for the demo.
+
 ## Full System Architecture
 
 ```mermaid

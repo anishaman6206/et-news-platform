@@ -73,8 +73,8 @@ cp .env.example .env
 ```
 et-news-platform/
 ├── services/
-│   ├── ingestion-pipeline/   # Kafka consumer -> embed -> Qdrant
-│   ├── api-server/           # FastAPI main backend (port 8000)
+│   ├── ingestion-pipeline/   # Kafka consumer -> embed -> Qdrant (planned for production — demo uses direct service calls)
+│   ├── api-server/           # FastAPI main backend (port 8000) (planned for production — demo uses direct service calls)
 │   ├── feature-feed/         # Personalised ranking (port 8011)
 │   ├── feature-briefing/     # RAG briefings (port 8002)
 │   ├── feature-video/        # OpenAI TTS audio (port 8003)

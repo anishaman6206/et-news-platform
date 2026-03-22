@@ -217,6 +217,22 @@ def _build_article_prompt(articles: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _strip_fences(text: str) -> str:
+    """Remove markdown code fences GPT-4o sometimes wraps around JSON output.
+
+    SSE spec only reads lines that start with 'data:'. If the raw GPT output
+    has newlines inside a fenced block (```json\\n{...}\\n```), every line
+    after the first is silently dropped by the EventSource parser on the
+    client, causing a parse failure. Stripping fences here keeps the JSON
+    on a single logical line so the SSE data field is always valid.
+    """
+    text = text.strip()
+    text = re.sub(r"^```json\s*\n?", "", text)
+    text = re.sub(r"^```\s*\n?", "", text)
+    text = re.sub(r"\n?```\s*$", "", text)
+    return text.strip()
+
+
 def _generate_briefing(topic: str, articles: list[dict]) -> str:
     article_text = _build_article_prompt(articles)
     prompt = (
@@ -227,7 +243,13 @@ def _generate_briefing(topic: str, articles: list[dict]) -> str:
         '"stakeholders": [{"name": "...", "role": "...", "sentiment": "..."}], '
         '"open_questions": ["..."], "what_to_watch": ["..."]}'
     )
-    return complete(prompt, system=BRIEFING_SYSTEM, max_tokens=2048)
+    raw = complete(prompt, system=BRIEFING_SYSTEM, max_tokens=2048)
+    stripped = _strip_fences(raw)
+    # SSE requires single-line data fields — compact to one line
+    try:
+        return json.dumps(json.loads(stripped))
+    except json.JSONDecodeError:
+        return stripped.replace("\n", " ")
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +272,13 @@ def _briefing_sse(topic: str, max_articles: int):
 
     cached = r.get(key)
     if cached:
-        yield f"data: {cached.decode()}\n\n"
+        cached_str = cached.decode()
+        # Ensure cached value is single-line (old entries may be pretty-printed)
+        try:
+            cached_str = json.dumps(json.loads(cached_str))
+        except json.JSONDecodeError:
+            cached_str = cached_str.replace("\n", " ")
+        yield f"data: {cached_str}\n\n"
         yield "data: [DONE]\n\n"
         return
 

@@ -11,9 +11,15 @@ interface Props {
 type Status = "checking" | "online" | "offline";
 
 const DOT_COLOR: Record<Status, string> = {
-  checking: "bg-yellow-400",
+  checking: "bg-yellow-400 animate-pulse",
   online:   "bg-green-500",
   offline:  "bg-red-500",
+};
+
+const DOT_TITLE: Record<Status, string> = {
+  checking: "Checking…",
+  online:   "Online",
+  offline:  "Offline",
 };
 
 export function ServiceStatus({ service, showLabel = true }: Props) {
@@ -28,6 +34,7 @@ export function ServiceStatus({ service, showLabel = true }: Props) {
       setLatency(Math.round(performance.now() - t0));
       setStatus("online");
     } catch {
+      // Network error, CORS, or 503 from proxy — treat as offline
       setLatency(null);
       setStatus("offline");
     }
@@ -41,11 +48,9 @@ export function ServiceStatus({ service, showLabel = true }: Props) {
   }, [service]);
 
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex items-center gap-1.5" title={`${service}: ${DOT_TITLE[status]}`}>
       <span
-        className={`inline-block h-2 w-2 rounded-full flex-shrink-0 ${DOT_COLOR[status]} ${
-          status === "checking" ? "animate-pulse" : ""
-        }`}
+        className={`inline-block h-2 w-2 flex-shrink-0 rounded-full ${DOT_COLOR[status]}`}
       />
       {showLabel && (
         <span className="text-xs text-gray-400">

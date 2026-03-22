@@ -163,10 +163,31 @@ def chunk_text(text: str, token_limit: int = CHUNK_TOKEN_LIMIT) -> list[str]:
 # ── Quality checks ────────────────────────────────────────────────────────────
 
 
+# Language-aware ratio limits.
+# Indian scripts (Devanagari, Tamil, Telugu, Bengali, etc.) use multi-byte
+# codepoints and longer word-forms than English, so the translated string is
+# naturally 2-3× longer in character count even for faithful translations.
+_LANG_RATIO_LIMITS: dict[str, tuple[float, float]] = {
+    "hi": (0.5, 3.5),
+    "ta": (0.5, 3.5),
+    "te": (0.5, 3.5),
+    "bn": (0.5, 3.5),
+    "mr": (0.5, 3.5),
+    "gu": (0.5, 3.5),
+    "kn": (0.5, 3.5),
+    "ml": (0.5, 3.5),
+}
+_DEFAULT_RATIO_LIMITS: tuple[float, float] = (0.7, 1.5)
+
+
 def check_length_ratio(source: str, translated: str, lang: str) -> float:
     """
     Compute ``len(translated) / len(source)`` and emit a WARNING when the ratio
-    falls outside the acceptable range ``[0.7, 1.5]``.
+    falls outside the acceptable range for *lang*.
+
+    Indian-script languages use language-aware limits (0.5, 3.5) because their
+    Unicode codepoints and morphology produce character counts 2-3× longer than
+    equivalent English text.  Other languages use the default range (0.7, 1.5).
 
     Returns the ratio (float).  Returns 1.0 when *source* is empty to avoid
     division-by-zero.
@@ -175,12 +196,15 @@ def check_length_ratio(source: str, translated: str, lang: str) -> float:
         return 1.0
 
     ratio = len(translated) / len(source)
+    lo, hi = _LANG_RATIO_LIMITS.get(lang, _DEFAULT_RATIO_LIMITS)
 
-    if not (0.7 <= ratio <= 1.5):
+    if not (lo <= ratio <= hi):
         log.warning(
-            "Translation length ratio %.2f is outside [0.7, 1.5] for lang=%s "
+            "Translation length ratio %.2f is outside [%.1f, %.1f] for lang=%s "
             "(source=%d chars, translated=%d chars)",
             ratio,
+            lo,
+            hi,
             lang,
             len(source),
             len(translated),

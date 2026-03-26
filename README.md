@@ -26,9 +26,7 @@ editorial agent processing to ET readers.
 
 | AI Briefing | AI Video Studio | Hindi Translation |
 |---|---|---|
-| ![Briefing](screenshots/briefing.png) | ![Video](screenshots/video.png) | ![Hindi](screenshots/home.png) |
-
-> 📸 *Screenshots will be added before final submission*
+| ![Briefing](screenshots/briefing.png) | ![Video](screenshots/video.png) | ![Hindi](screenshots/home.jpeg) |
 
 ---
 
@@ -411,7 +409,7 @@ user's interest vector and article embeddings stored in Qdrant.
 **Engagement signals:** `opened` (+0.3), `scroll_50` (+0.5), `scroll_100` (+0.8), `shared` (+1.0), `skipped` (−0.2)
 
 > 📸 *Screenshot: Personalised Feed page*
-> ![Feed](screenshots/feed.png)
+> ![Feed](screenshots/home.png)
 
 ```mermaid
 flowchart LR

@@ -50,6 +50,31 @@ def complete(
     return resp.choices[0].message.content or ""
 
 
+def complete_stream(
+    prompt: str,
+    *,
+    model: str = "gpt-4o",
+    max_tokens: int = 1024,
+    system: str | None = None,
+):
+    """Streaming chat completion — yields text delta chunks as they arrive."""
+    client = get_openai()
+    messages: list[dict] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    stream = client.chat.completions.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=messages,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
 def embed(text: str, model: str = "text-embedding-3-small") -> list[float]:
     """OpenAI embedding — used by ingestion-pipeline and feature-briefing."""
     client = get_openai()

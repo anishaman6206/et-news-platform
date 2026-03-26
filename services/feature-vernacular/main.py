@@ -488,14 +488,14 @@ async def translate_batch(req: BatchTranslateRequest) -> dict[str, Any]:
             },
         )
 
-    results = []
+    translations = []
     for item in req.articles:
         translated = translate(item.text, req.lang, item.id)
-        results.append(
-            {"article_id": item.id, "lang": req.lang, "translated": translated}
+        translations.append(
+            {"id": item.id, "lang": req.lang, "translated": translated}
         )
 
-    return {"results": results}
+    return {"translations": translations}
 
 
 # ── Kafka worker ──────────────────────────────────────────────────────────────

@@ -77,7 +77,8 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 
 
-def _init_job(job_id: str) -> None:
+def _init_job(job_id: str, title: str = "") -> None:
+    from datetime import datetime, timezone
     with _jobs_lock:
         _jobs[job_id] = {
             "job_id": job_id,
@@ -85,6 +86,8 @@ def _init_job(job_id: str) -> None:
             "progress": 0,
             "output_path": None,
             "error": None,
+            "title": title,
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
 
@@ -98,26 +101,61 @@ def _get_job(job_id: str) -> dict | None:
         return dict(_jobs[job_id]) if job_id in _jobs else None
 
 
-# ── FFmpeg check ───────────────────────────────────────────────────────────────
+# ── FFmpeg discovery ───────────────────────────────────────────────────────────
 
 _ffmpeg_available: bool = False
+_ffmpeg_exe: str = "ffmpeg"
+_ffprobe_exe: str = "ffprobe"
+
+_FFMPEG_CANDIDATE_DIRS: list[str] = [
+    # WinGet Gyan.FFmpeg install (version-pinned path may change on upgrade)
+    r"C:\Users\anish\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg.Essentials_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-7.1.1-essentials_build\bin",
+    r"C:\ffmpeg\bin",
+    r"C:\Program Files\ffmpeg\bin",
+    r"C:\Program Files (x86)\ffmpeg\bin",
+]
+
+
+def _find_ffmpeg_exe() -> tuple[str, str]:
+    """Return (ffmpeg_path, ffprobe_path).
+
+    Priority:
+    1. FFMPEG_PATH env var (directory that contains ffmpeg.exe)
+    2. ffmpeg already on PATH (shutil.which)
+    3. Known Windows install locations
+    """
+    import shutil
+
+    env_dir = os.environ.get("FFMPEG_PATH", "")
+    candidates = ([env_dir] if env_dir else []) + _FFMPEG_CANDIDATE_DIRS
+
+    for d in candidates:
+        ff = os.path.join(d, "ffmpeg.exe")
+        fp = os.path.join(d, "ffprobe.exe")
+        if os.path.isfile(ff):
+            return ff, (fp if os.path.isfile(fp) else "ffprobe")
+
+    # Fall back to PATH lookup
+    ff = shutil.which("ffmpeg") or "ffmpeg"
+    fp = shutil.which("ffprobe") or "ffprobe"
+    return ff, fp
 
 
 def check_ffmpeg() -> bool:
-    global _ffmpeg_available
+    global _ffmpeg_available, _ffmpeg_exe, _ffprobe_exe
+    _ffmpeg_exe, _ffprobe_exe = _find_ffmpeg_exe()
     try:
         subprocess.run(
-            ["ffmpeg", "-version"],
+            [_ffmpeg_exe, "-version"],
             capture_output=True,
             check=True,
             timeout=5,
         )
         _ffmpeg_available = True
-        log.info("FFmpeg is available")
+        log.info("FFmpeg found: %s", _ffmpeg_exe)
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         log.warning(
-            "FFmpeg not found in PATH — video assembly will fail. "
-            "Install FFmpeg and add to PATH before running."
+            "FFmpeg not found — tried: %s. Video assembly will fail.", _ffmpeg_exe
         )
         _ffmpeg_available = False
     return _ffmpeg_available
@@ -234,13 +272,34 @@ def generate_scene_audio(spoken_text: str, output_path: Path) -> None:
 
 
 def concatenate_audio(audio_files: list[Path], output_path: Path) -> None:
-    """Concatenate a list of MP3 files into one using pydub."""
-    from pydub import AudioSegment
+    """Concatenate MP3 files using FFmpeg's concat demuxer.
 
-    combined = AudioSegment.empty()
-    for f in audio_files:
-        combined += AudioSegment.from_mp3(str(f))
-    combined.export(str(output_path), format="mp3")
+    Avoids pydub entirely so ffprobe is never required — the Gyan FFmpeg
+    Essentials build ships only ffmpeg.exe, not ffprobe.exe.
+    """
+    if not audio_files:
+        return
+    if len(audio_files) == 1:
+        import shutil
+        shutil.copy2(str(audio_files[0]), str(output_path))
+        log.debug("Single audio file — copied directly: %s", output_path)
+        return
+
+    # Write a concat list that FFmpeg's concat demuxer can read
+    list_path = output_path.parent / "concat_list.txt"
+    with open(list_path, "w", encoding="utf-8") as fh:
+        for ap in audio_files:
+            fh.write(f"file '{_fwd(ap.resolve())}'\n")
+
+    _ffmpeg([
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", _fwd(list_path.resolve()),
+        "-c", "copy",
+        _fwd(output_path.resolve()),
+    ])
+
+    list_path.unlink(missing_ok=True)
     log.debug("Concatenated %d audio files → %s", len(audio_files), output_path)
 
 
@@ -254,6 +313,9 @@ def _fwd(path: Path) -> str:
 
 def _ffmpeg(cmd: list[str], **kwargs) -> None:
     """Run an FFmpeg command, raising RuntimeError with stderr on failure."""
+    # Replace the bare "ffmpeg" sentinel with the resolved executable path
+    if cmd and cmd[0] == "ffmpeg":
+        cmd = [_ffmpeg_exe] + cmd[1:]
     result = subprocess.run(cmd, capture_output=True, text=True, **kwargs)
     if result.returncode != 0:
         log.error("FFmpeg stderr:\n%s", result.stderr)
@@ -434,7 +496,7 @@ async def health() -> dict:
 @app.post("/video/generate")
 async def video_generate(req: VideoRequest) -> dict:
     job_id = str(uuid.uuid4())
-    _init_job(job_id)
+    _init_job(job_id, title=req.title)
     t = threading.Thread(
         target=run_job,
         args=(job_id, req.article_id, req.title, req.text),
@@ -443,6 +505,14 @@ async def video_generate(req: VideoRequest) -> dict:
     t.start()
     log.info("Video job %s queued for article_id=%s", job_id, req.article_id)
     return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/video/jobs")
+async def video_jobs() -> dict:
+    """Return the last 10 jobs (newest first) for the Video Studio panel."""
+    with _jobs_lock:
+        recent = list(_jobs.values())[-10:]
+    return {"jobs": list(reversed(recent))}
 
 
 @app.get("/video/status/{job_id}")

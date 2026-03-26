@@ -306,6 +306,13 @@ def store_sentiment(
 
 
 def get_sentiment_timeline(topic: str) -> list[dict]:
+    """Fetch timeline rows for a topic using bidirectional substring matching.
+
+    Handles the mismatch between the topic stored by the agent (e.g. "BJP")
+    and the topic searched by the user (e.g. "BJP TMC violence"):
+      - stored topic contains search term  → "BJP TMC" ILIKE '%BJP%'     ✓
+      - search term contains stored topic  → "BJP TMC violence" ILIKE '%BJP%' ✓
+    """
     with get_engine().connect() as conn:
         result = conn.execute(
             text(
@@ -313,10 +320,11 @@ def get_sentiment_timeline(topic: str) -> list[dict]:
                 SELECT article_id, sentiment_score, label, pub_date
                 FROM article_sentiments
                 WHERE topic ILIKE :pattern
+                   OR :topic ILIKE '%' || topic || '%'
                 ORDER BY pub_date ASC NULLS LAST
                 """
             ),
-            {"pattern": f"%{topic}%"},
+            {"pattern": f"%{topic}%", "topic": topic},
         )
         return [dict(row._mapping) for row in result]
 
@@ -328,6 +336,7 @@ def get_topic_entities(topic: str, limit: int = 10) -> list[dict]:
             """
             MATCH (e:Entity)
             WHERE toLower(e.name) CONTAINS toLower($topic)
+               OR toLower($topic) CONTAINS toLower(e.name)
             WITH e
             MATCH (e)-[r:CO_OCCURS]-(other:Entity)
             RETURN other.name AS name, other.type AS type, sum(r.weight) AS connections
@@ -418,9 +427,49 @@ class ArticleIn(BaseModel):
     pub_date: str | None = None
 
 
+class ExtractTopicRequest(BaseModel):
+    title: str
+    summary: str = ""
+
+
+_EXTRACT_TOPIC_SYSTEM = (
+    "Extract the single most important searchable topic from this news article title "
+    "and summary. Return only 1-3 words that best identify the main entity or story. "
+    "Examples:\n"
+    "'Here's what Zerodha's Nithin Kamath said on Sebi app' → 'SEBI Zerodha'\n"
+    "'RBI holds repo rate at 6.5% in March meeting' → 'RBI repo rate'\n"
+    "'JPMorgan launches credit default swaps against Microsoft' → 'JPMorgan Microsoft'\n"
+    "'West Asia turmoil to swell fertiliser subsidy' → 'fertiliser subsidy'\n"
+    "Return ONLY the topic words, nothing else."
+)
+
+
+def _fallback_topic(title: str) -> str:
+    """Return first 2 capitalised words from the title."""
+    words = [w for w in title.split() if w and w[0].isupper()]
+    return " ".join(words[:2]) or " ".join(title.split()[:2])
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "feature-arc"}
+
+
+@app.post("/extract-topic")
+async def extract_topic_endpoint(req: ExtractTopicRequest) -> dict:
+    """Use GPT-4o-mini to extract the most searchable topic from a title + summary."""
+    try:
+        raw = complete(
+            f"Title: {req.title}\nSummary: {req.summary}",
+            system=_EXTRACT_TOPIC_SYSTEM,
+            model="gpt-4o-mini",
+            max_tokens=20,
+        )
+        topic = raw.strip().splitlines()[0].strip().strip("'\".")
+        return {"topic": topic or _fallback_topic(req.title)}
+    except Exception:
+        log.warning("extract-topic GPT call failed, using fallback for: %s", req.title)
+        return {"topic": _fallback_topic(req.title)}
 
 
 @app.post("/arc/process")
@@ -440,6 +489,26 @@ async def process_article(article: ArticleIn) -> dict:
         "entities": [{"name": n, "type": t, "sentence": s} for n, t, s in entities],
         "sentiment": sentiment,
     }
+
+
+@app.get("/topics")
+def get_topics() -> dict:
+    """Return top entity names from Neo4j as topic suggestions."""
+    try:
+        with get_neo4j().session() as session:
+            result = session.run(
+                """
+                MATCH (e:Entity)
+                WHERE e.article_count > 0
+                RETURN e.name as name, e.article_count as count
+                ORDER BY count DESC
+                LIMIT 10
+                """
+            )
+            topics = [r["name"] for r in result]
+            return {"topics": topics if topics else ["RBI", "SEBI", "Markets", "Budget", "Nifty"]}
+    except Exception:
+        return {"topics": ["RBI", "SEBI", "Markets", "Budget", "Nifty"]}
 
 
 @app.get("/arc/{topic}")

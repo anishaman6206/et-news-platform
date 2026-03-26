@@ -1,7 +1,7 @@
 """
 RSS ingestion service for Economic Times articles.
 
-Polls 4 ET RSS feeds every 30 minutes, embeds articles via OpenAI
+Polls 7 ET RSS feeds every 30 minutes, embeds articles via OpenAI
 text-embedding-3-small, and stores vectors in Qdrant.
 
 Endpoints:
@@ -9,6 +9,7 @@ Endpoints:
   POST /ingest/trigger               → manually trigger ingestion now
   GET  /ingest/stats                 → last 10 ingestion runs (from PG)
   GET  /ingest/articles?limit=&section= → recently ingested articles
+  GET  /ingest/count                 → total articles in Qdrant
 """
 
 from __future__ import annotations
@@ -53,10 +54,13 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 FEEDS: dict[str, str] = {
-    "markets": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
-    "economy": "https://economictimes.indiatimes.com/economy/rssfeeds/1373380680.cms",
-    "tech": "https://economictimes.indiatimes.com/tech/rssfeeds/13357270.cms",
+    "markets":  "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    "economy":  "https://economictimes.indiatimes.com/economy/rssfeeds/1373380680.cms",
+    "tech":     "https://economictimes.indiatimes.com/tech/rssfeeds/13357270.cms",
     "startups": "https://economictimes.indiatimes.com/small-biz/startups/rssfeeds/9701786.cms",
+    "news":     "https://economictimes.indiatimes.com/news/rssfeeds/1715249553.cms",
+    "finance":  "https://economictimes.indiatimes.com/wealth/rssfeeds/837555174.cms",
+    "industry": "https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms",
 }
 
 COLLECTION = "articles"
@@ -145,11 +149,39 @@ def parse_pub_date(entry) -> tuple[str, float]:
 
 
 def is_already_ingested(article_id: str) -> bool:
-    """Fast Redis check; falls back to False on error."""
+    """Check Redis (fast cache) then Qdrant (persistent) for dedup.
+
+    Redis is volatile — cleared on restart — so Qdrant is the source of truth.
+    Redis is only used to avoid redundant Qdrant lookups within a session.
+    On any error we return False so the article is retried rather than skipped.
+    """
     try:
-        return bool(get_redis().sismember(REDIS_KEY, article_id))
+        # Fast path: Redis in-memory cache
+        if get_redis().sismember(REDIS_KEY, article_id):
+            return True
     except Exception:
-        return False
+        pass
+
+    try:
+        # Persistent path: Qdrant
+        import vector_store as vs
+        results = vs.get_client().retrieve(
+            collection_name=COLLECTION,
+            ids=[article_id],
+            with_payload=False,
+            with_vectors=False,
+        )
+        if results:
+            # Backfill Redis cache so future checks stay fast
+            try:
+                get_redis().sadd(REDIS_KEY, article_id)
+            except Exception:
+                pass
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 def mark_ingested(article_id: str) -> None:
@@ -198,8 +230,15 @@ def parse_feed(section: str, feed_url: str) -> list[dict]:
             url = entry.get("link", "")
             if not url:
                 continue
-            raw_summary = entry.get("summary", entry.get("description", ""))
+            raw_summary = (
+                entry.get("summary")
+                or entry.get("description")
+                or (entry.get("content", [{}])[0].get("value") if entry.get("content") else None)
+                or ""
+            )
             clean_summary = strip_html(raw_summary) if raw_summary else ""
+            if len(clean_summary) < 20:
+                clean_summary = ""
             pub_date, pub_ts = parse_pub_date(entry)
             articles.append(
                 {
@@ -367,9 +406,20 @@ def ingestion_stats():
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/ingest/count")
+def article_count():
+    """Return total number of vectors stored in Qdrant."""
+    try:
+        import vector_store as vs
+        info = vs.get_client().get_collection(COLLECTION)
+        return {"total_articles": info.points_count}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/ingest/articles")
 def list_articles(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=500),
     section: Optional[str] = Query(None),
 ):
     try:

@@ -34,7 +34,6 @@ from typing import Literal, Union
 
 import vector_store
 from llm_client import embed
-from qdrant_client.models import Distance, PointStruct, VectorParams
 
 app = FastAPI(title="Feature: Feed", version="1.0.0")
 
@@ -76,19 +75,6 @@ ROLE_SEEDS: dict[str, list[str]] = {
     ],
 }
 
-SEED_ARTICLES: list[dict] = [
-    {"title": "RBI repo rate decision March 2026", "topic": "monetary_policy", "section": "economy"},
-    {"title": "SEBI mutual fund regulations tightened", "topic": "regulation", "section": "markets"},
-    {"title": "Infosys Q4 results beat estimates", "topic": "earnings", "section": "tech"},
-    {"title": "India startup funding drops 30 percent", "topic": "startup", "section": "tech"},
-    {"title": "Union Budget 2026 key highlights", "topic": "fiscal_policy", "section": "economy"},
-    {"title": "Nifty 50 breaks 25000 resistance", "topic": "markets", "section": "markets"},
-    {"title": "Gold vs equity returns comparison 2026", "topic": "investment", "section": "markets"},
-    {"title": "FII DII flows March 2026 analysis", "topic": "flows", "section": "markets"},
-    {"title": "India GDP growth forecast revised upward", "topic": "macroeconomics", "section": "economy"},
-    {"title": "Banking sector NPA levels at decade low", "topic": "banking", "section": "banking"},
-]
-
 # ---------------------------------------------------------------------------
 # Redis helpers
 # ---------------------------------------------------------------------------
@@ -125,47 +111,6 @@ def _recency_score(pub_ts: float) -> float:
     """Exponential decay: score = exp(-age_hours / 24)."""
     age_hours = (time.time() - pub_ts) / 3600.0
     return math.exp(-age_hours / 24.0)
-
-
-# ---------------------------------------------------------------------------
-# Startup: seed Qdrant
-# ---------------------------------------------------------------------------
-
-
-def _seed_qdrant() -> None:
-    client = vector_store.get_client()
-
-    # Always drop and recreate so stale string-ID points from previous runs are gone
-    existing = [c.name for c in client.get_collections().collections]
-    if "articles" in existing:
-        client.delete_collection("articles")
-    client.create_collection(
-        collection_name="articles",
-        vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
-    )
-
-    now = time.time()
-    n = len(SEED_ARTICLES)
-    points: list[PointStruct] = []
-    for i, article in enumerate(SEED_ARTICLES):
-        # Space pub_ts evenly across last 72 hours so recency scoring is testable
-        age_hours = (i / max(n - 1, 1)) * 72.0
-        pub_ts = now - age_hours * 3600.0
-        payload = {
-            **article,
-            "pub_ts": pub_ts,
-            "article_id": i + 1,
-        }
-        vec = embed(article["title"])
-        # Use native int IDs (1-10) so qdrant.retrieve(ids=[1]) matches exactly
-        points.append(PointStruct(id=i + 1, vector=vec, payload=payload))
-
-    client.upsert(collection_name="articles", points=points)
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    _seed_qdrant()
 
 
 # ---------------------------------------------------------------------------

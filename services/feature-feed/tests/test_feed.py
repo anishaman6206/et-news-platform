@@ -79,17 +79,15 @@ def app_client(fake_redis: FakeRedis):
     Yields (TestClient, fake_redis).
 
     Patches:
-      - main._seed_qdrant  → no-op (skip real Qdrant + OpenAI on startup)
       - main.get_redis     → returns fake_redis
       - main.embed         → returns FAKE_VEC_LIST
     """
-    with patch("main._seed_qdrant"):
-        with patch("main.get_redis", return_value=fake_redis):
-            with patch("main.embed", return_value=FAKE_VEC_LIST):
-                import main as feed_main  # noqa: PLC0415 — lazy import intentional
+    with patch("main.get_redis", return_value=fake_redis):
+        with patch("main.embed", return_value=FAKE_VEC_LIST):
+            import main as feed_main  # noqa: PLC0415 — lazy import intentional
 
-                with TestClient(feed_main.app) as client:
-                    yield client, fake_redis
+            with TestClient(feed_main.app) as client:
+                yield client, fake_redis
 
 
 # ---------------------------------------------------------------------------

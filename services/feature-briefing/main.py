@@ -35,7 +35,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import vector_store
-from llm_client import complete, embed
+from llm_client import complete, complete_stream, embed
 
 app = FastAPI(title="Feature: Briefing", version="1.0.0")
 
@@ -290,17 +290,33 @@ def _briefing_sse(topic: str, max_articles: int):
 
 
 def _ask_sse(topic: str, question: str):
-    """Answer a question strictly from the retrieved article corpus."""
-    articles = _hybrid_retrieve(topic)
-    article_text = _build_article_prompt(articles)
+    """Answer a question using article context or Qdrant retrieval."""
+    if "Given this article:" in question:
+        # Extract the article context embedded in the question by the frontend
+        context_articles = [{"title": topic, "section": "news",
+                              "text": question.split("Question:")[0]}]
+        question = question.split("Question:")[-1].strip()
+    else:
+        context_articles = _hybrid_retrieve(topic, max_articles=5)
+
+    lines = []
+    for i, a in enumerate(context_articles, 1):
+        line = f"[{i}] {a.get('title', 'Unknown')} — {a.get('section', 'general')}"
+        if a.get("text"):
+            line += f"\n{a['text']}"
+        lines.append(line)
+    article_text = "\n".join(lines)
 
     prompt = (
         f"Articles:\n{article_text}\n\n"
         f"Question: {question}\n\n"
         "Answer:"
     )
-    answer = complete(prompt, system=ASK_SYSTEM, max_tokens=1024)
-    yield f"data: {answer}\n\n"
+    for token in complete_stream(prompt, system=ASK_SYSTEM, max_tokens=1024):
+        # SSE data fields must not contain bare newlines — replace with space
+        safe = token.replace("\n", " ")
+        if safe:
+            yield f"data: {safe}\n\n"
     yield "data: [DONE]\n\n"
 
 

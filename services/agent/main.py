@@ -133,10 +133,19 @@ Return JSON only:
 
 Rules:
 - Translate if: article is about economy, markets, or policy
-- Update arc if: article mentions a known ongoing story entity
-  (RBI, SEBI, Budget, Adani, Infosys, Nifty, etc.)
+- Update arc if: article is about ANY ongoing story that involves named
+  organizations, people, or geopolitical events. This includes: companies,
+  government bodies, political figures, international events, regulatory
+  bodies, market indices. When in doubt, update the arc — it costs little
+  and builds richer story tracking over time.
+  arc_topic must be the most specific searchable name: company name, person
+  name, event name, or country name (e.g. "JPMorgan", "Ukraine", "SpaceX",
+  "Nirmala Sitharaman"). Never leave arc_topic null when should_update_arc
+  is true.
 - Generate briefing if: article score > 0.7 or topic is breaking news
-- Generate video if: article is high-importance AND no video made today
+- Generate video if: article is from markets, economy, finance, or policy sections,
+  OR the title contains a data point (%, ₹, crore, billion, rate, index).
+  Err on the side of generating — a video for every 2nd article is fine.
 - Always update feed (implicit)
 """
 

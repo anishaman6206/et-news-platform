@@ -118,10 +118,32 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json() as unknown;
-  return proxySSE(`${SERVICE_URL}/briefing/ask`, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify(body),
-  });
+  const body = await request.json() as { topic?: string; question?: string; context?: string };
+  const enrichedQuestion = body.context
+    ? `Given this article: "${body.context}"\n\nQuestion: ${body.question ?? ""}`
+    : body.question ?? "";
+
+  // Pass the stream straight through — do NOT buffer with normalisedSSE.
+  // The Q&A backend now streams token-by-token so every byte must be
+  // forwarded as it arrives. Buffering causes apparent truncation.
+  try {
+    const res = await fetch(`${SERVICE_URL}/briefing/ask`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ topic: body.topic, question: enrichedQuestion }),
+    });
+    return new Response(res.body, {
+      headers: {
+        "Content-Type":      "text/event-stream",
+        "Cache-Control":     "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+        "Connection":        "keep-alive",
+      },
+    });
+  } catch {
+    return new Response(
+      `data: ${JSON.stringify({ error: "Service unavailable" })}\n\n`,
+      { status: 503, headers: { "Content-Type": "text/event-stream" } }
+    );
+  }
 }

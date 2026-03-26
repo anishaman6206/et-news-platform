@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   TrendingUp,
   TrendingDown,
@@ -8,20 +9,18 @@ import {
   Eye,
   Lightbulb,
   Search,
-  Plus,
   BarChart2,
+  Bot,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
-import { processArcArticle, getArc } from "@/lib/api";
+import { getArc, getArcTopics } from "@/lib/api";
 import type { ArcResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-// The API returns `sentiment_score` from the DB column; ArcSentiment has `score`.
-// We handle both.
 interface TimelineItem {
   article_id: string;
   sentiment_score?: number | null;
@@ -38,7 +37,7 @@ interface EntityItem {
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const QUICK_TOPICS = ["RBI", "SEBI", "Markets", "Budget"];
+const DEFAULT_TOPICS = ["RBI", "SEBI", "Markets", "Budget", "Adani", "Infosys"];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -61,19 +60,27 @@ function scoreRingClass(score: number): string {
 
 function labelStyle(label: string): string {
   switch (label?.toLowerCase()) {
-    case "positive": return "border-green-700/50 bg-green-950/60 text-green-400";
-    case "negative": return "border-red-700/50   bg-red-950/60   text-red-400";
-    default:         return "border-white/10      bg-white/5       text-gray-400";
+    case "positive":
+      return "border-green-700/50 bg-green-950/60 text-green-400";
+    case "negative":
+      return "border-red-700/50   bg-red-950/60   text-red-400";
+    default:
+      return "border-white/10      bg-white/5       text-gray-400";
   }
 }
 
 function entityTypeStyle(type: string): string {
   switch (type?.toUpperCase()) {
-    case "ORG":    return "bg-blue-900/60   text-blue-300   border-blue-700/50";
-    case "PERSON": return "bg-purple-900/60 text-purple-300 border-purple-700/50";
-    case "GPE":    return "bg-green-900/60  text-green-300  border-green-700/50";
-    case "MONEY":  return "bg-amber-900/60  text-amber-300  border-amber-700/50";
-    default:       return "bg-gray-800       text-gray-400   border-white/10";
+    case "ORG":
+      return "bg-blue-900/60   text-blue-300   border-blue-700/50";
+    case "PERSON":
+      return "bg-purple-900/60 text-purple-300 border-purple-700/50";
+    case "GPE":
+      return "bg-green-900/60  text-green-300  border-green-700/50";
+    case "MONEY":
+      return "bg-amber-900/60  text-amber-300  border-amber-700/50";
+    default:
+      return "bg-gray-800       text-gray-400   border-white/10";
   }
 }
 
@@ -88,10 +95,6 @@ function formatDate(raw: string | null | undefined): string {
   } catch {
     return String(raw).slice(0, 10);
   }
-}
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -118,11 +121,16 @@ function TrendBadge({ trend }: { trend: string }) {
   );
 }
 
-function TimelineCard({ item, isLast }: { item: TimelineItem; isLast: boolean }) {
+function TimelineCard({
+  item,
+  isLast,
+}: {
+  item: TimelineItem;
+  isLast: boolean;
+}) {
   const score = getScore(item);
   return (
     <div className="relative flex w-36 flex-shrink-0 flex-col items-center">
-      {/* Connector line to next card */}
       {!isLast && (
         <div className="absolute left-1/2 top-9 z-0 h-px w-full bg-white/10" />
       )}
@@ -165,7 +173,9 @@ function EntityCard({
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-gray-800/50 p-4">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-semibold leading-tight text-white">{entity.name}</p>
+        <p className="text-sm font-semibold leading-tight text-white">
+          {entity.name}
+        </p>
         <span
           className={cn(
             "flex-shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase",
@@ -229,7 +239,9 @@ function PredictionsSection({
             <p className="text-[10px] font-semibold uppercase tracking-widest text-amber-500">
               Contrarian view
             </p>
-            <p className="text-sm leading-relaxed text-amber-200/80">{contrarianView}</p>
+            <p className="text-sm leading-relaxed text-amber-200/80">
+              {contrarianView}
+            </p>
           </div>
         )}
         {watchFor && (
@@ -252,70 +264,45 @@ function EmptyArcState({ onQuickTopic }: { onQuickTopic: (t: string) => void }) 
         <BarChart2 className="h-6 w-6 text-gray-500" />
       </div>
       <div>
-        <p className="text-sm font-medium text-gray-300">Track any ongoing business story</p>
-        <p className="mt-1 text-xs text-gray-600">
-          Process articles above, then load the arc
+        <p className="text-sm font-medium text-gray-300">
+          Track any ongoing business story
         </p>
-      </div>
-      <div className="flex flex-wrap justify-center gap-2">
-        {QUICK_TOPICS.map((t) => (
-          <button
-            key={t}
-            onClick={() => onQuickTopic(t)}
-            className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-white/20 hover:text-white"
-          >
-            {t}
-          </button>
-        ))}
+        <p className="mt-1 text-xs text-gray-600">
+          Search for a topic below to explore its arc
+        </p>
       </div>
     </div>
   );
 }
 
-// ── Main page ──────────────────────────────────────────────────────────────────
+// ── Main page (inner — uses useSearchParams) ────────────────────────────────────
 
-export default function ArcPage() {
-  // Process form
-  const [processTopic, setProcessTopic] = useState("");
-  const [articleText,  setArticleText]  = useState("");
-  const [articleDate,  setArticleDate]  = useState(todayISO);
-  const [processing,   setProcessing]   = useState(false);
-  const [processError, setProcessError] = useState<string | null>(null);
-  const [toast,        setToast]        = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+function ArcPageContent() {
+  const searchParams = useSearchParams();
+  const initialTopic = searchParams.get("topic") ?? "";
 
-  // Arc view
-  const [searchTopic, setSearchTopic] = useState("");
-  const [arc,         setArc]         = useState<ArcResponse | null>(null);
-  const [arcLoading,  setArcLoading]  = useState(false);
-  const [arcError,    setArcError]    = useState<string | null>(null);
+  const [searchTopic, setSearchTopic] = useState(initialTopic);
+  const [arc, setArc] = useState<ArcResponse | null>(null);
+  const [arcLoading, setArcLoading] = useState(false);
+  const [arcError, setArcError] = useState<string | null>(null);
+  const [trackedTopics, setTrackedTopics] = useState<string[]>(DEFAULT_TOPICS);
 
-  function showToast(msg: string) {
-    setToast(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2500);
-  }
+  // Auto-load if topic provided via URL
+  useEffect(() => {
+    if (initialTopic) void handleLoadArc(initialTopic);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTopic]);
 
-  const handleProcess = useCallback(async () => {
-    if (!processTopic.trim() || !articleText.trim()) return;
-    setProcessing(true);
-    setProcessError(null);
-    try {
-      const articleId = `web_${Date.now()}`;
-      await processArcArticle(
-        articleId,
-        processTopic.trim(),
-        articleText.trim(),
-        articleDate || undefined,
-      );
-      showToast("Article processed — arc updated");
-      setArticleText("");
-    } catch (err) {
-      setProcessError(err instanceof Error ? err.message : "Processing failed");
-    } finally {
-      setProcessing(false);
-    }
-  }, [processTopic, articleText, articleDate]);
+  // Try to fetch tracked topics from arc service
+  useEffect(() => {
+    getArcTopics()
+      .then((res) => {
+        if (res.topics?.length) setTrackedTopics(res.topics);
+      })
+      .catch(() => {
+        // keep DEFAULT_TOPICS
+      });
+  }, []);
 
   const handleLoadArc = useCallback(async (topic: string) => {
     const t = topic.trim();
@@ -334,10 +321,19 @@ export default function ArcPage() {
     }
   }, []);
 
-  function handleQuickTopic(t: string) {
+  const shortNames: Record<string, string> = {
+    "Reserve Bank of India": "RBI",
+    "The Reserve Bank of India": "RBI",
+    "Bombay Stock Exchange": "BSE",
+    "Nirmala Sitharaman": "Nirmala Sitharaman",
+    "Shaktikanta Das": "Shaktikanta Das",
+  };
+
+  const handleQuickTopic = (pill: string) => {
+    const t = shortNames[pill] ?? pill;
     setSearchTopic(t);
     void handleLoadArc(t);
-  }
+  };
 
   const timeline = (arc?.timeline ?? []) as TimelineItem[];
   const entities = (arc?.key_entities ?? []) as EntityItem[];
@@ -345,79 +341,44 @@ export default function ArcPage() {
 
   return (
     <div className="min-h-screen bg-gray-900">
-      {/* Toast notification */}
-      {toast && (
-        <div className="fixed right-4 top-4 z-50 rounded-xl border border-green-700/50 bg-green-950/90 px-4 py-2.5 text-sm text-green-300 shadow-lg backdrop-blur-sm">
-          {toast}
-        </div>
-      )}
-
       <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
         <PageHeader
           title="Story Arc Tracker"
           subtitle="Entity graphs, sentiment trends, and AI predictions"
         />
 
-        {/* ── Process card ── */}
-        <div className="space-y-4 rounded-2xl border border-white/10 bg-gray-800/50 p-6">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-            Add an article to track
+        {/* Agent auto-tracking note */}
+        <div className="flex items-center gap-3 rounded-2xl border border-[#FF6B35]/20 bg-[#FF6B35]/5 px-4 py-3">
+          <Bot className="h-4 w-4 text-[#FF6B35] shrink-0" />
+          <p className="text-xs text-gray-300">
+            Articles are tracked automatically by the ET News Agent — no manual
+            input needed.
           </p>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <input
-              type="text"
-              value={processTopic}
-              onChange={(e) => setProcessTopic(e.target.value)}
-              placeholder="e.g. RBI, Adani, Budget 2026"
-              className="rounded-xl border border-white/10 bg-gray-900 px-3.5 py-2.5 text-sm text-white placeholder-gray-600 outline-none focus:border-[#FF6B35]/50 focus:ring-1 focus:ring-[#FF6B35]/30"
-            />
-            <input
-              type="date"
-              value={articleDate}
-              onChange={(e) => setArticleDate(e.target.value)}
-              className="rounded-xl border border-white/10 bg-gray-900 px-3.5 py-2.5 text-sm text-white outline-none focus:border-[#FF6B35]/50 focus:ring-1 focus:ring-[#FF6B35]/30 [color-scheme:dark]"
-            />
-          </div>
-
-          <textarea
-            value={articleText}
-            onChange={(e) => setArticleText(e.target.value)}
-            placeholder="Paste article text here..."
-            rows={4}
-            className="w-full resize-none rounded-xl border border-white/10 bg-gray-900 px-3.5 py-2.5 text-sm text-white placeholder-gray-600 outline-none focus:border-[#FF6B35]/50 focus:ring-1 focus:ring-[#FF6B35]/30"
-          />
-
-          {processError && <ErrorBanner message={processError} />}
-
-          <button
-            onClick={() => void handleProcess()}
-            disabled={processing || !processTopic.trim() || !articleText.trim()}
-            className={cn(
-              "flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-all",
-              processing || !processTopic.trim() || !articleText.trim()
-                ? "cursor-not-allowed bg-gray-700 text-gray-500"
-                : "bg-[#FF6B35] text-white hover:bg-[#e55a25] active:scale-95",
-            )}
-          >
-            {processing ? (
-              <>
-                <LoadingSpinner size="sm" /> Processing…
-              </>
-            ) : (
-              <>
-                <Plus className="h-4 w-4" /> Process Article
-              </>
-            )}
-          </button>
         </div>
 
-        {/* ── Search bar ── */}
+        {/* Recently tracked topics */}
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-gray-800/50 p-5">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
+            Recently tracked topics
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {trackedTopics.map((t) => (
+              <button
+                key={t}
+                onClick={() => handleQuickTopic(t)}
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-[#FF6B35]/40 hover:bg-[#FF6B35]/10 hover:text-[#FF6B35]"
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Search bar */}
         <div className="space-y-4 rounded-2xl border border-white/10 bg-gray-800/50 p-6">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
             View story arc for topic
           </p>
-
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -450,21 +411,9 @@ export default function ArcPage() {
               Load Arc
             </button>
           </form>
-
-          <div className="flex flex-wrap gap-2">
-            {QUICK_TOPICS.map((t) => (
-              <button
-                key={t}
-                onClick={() => handleQuickTopic(t)}
-                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-white/20 hover:text-white"
-              >
-                {t}
-              </button>
-            ))}
-          </div>
         </div>
 
-        {/* ── Arc display ── */}
+        {/* Arc display */}
         {arcError && <ErrorBanner message={arcError} />}
 
         {arcLoading && (
@@ -479,16 +428,15 @@ export default function ArcPage() {
 
         {!arcLoading && arc && (
           <div className="space-y-6">
-            {/* Arc header */}
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="text-2xl font-bold text-white">{arc.topic}</h2>
               <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-400">
-                {arc.article_count} article{arc.article_count !== 1 ? "s" : ""} tracked
+                {arc.article_count} article{arc.article_count !== 1 ? "s" : ""}{" "}
+                tracked
               </span>
               <TrendBadge trend={arc.sentiment_trend} />
             </div>
 
-            {/* Timeline */}
             {timeline.length > 0 ? (
               <section className="space-y-3">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
@@ -508,11 +456,10 @@ export default function ArcPage() {
               </section>
             ) : (
               <div className="rounded-xl border border-white/10 bg-gray-800/30 py-8 text-center text-xs text-gray-600">
-                No timeline data yet — process some articles first
+                No timeline data yet — agent is still processing articles
               </div>
             )}
 
-            {/* Key entities */}
             {entities.length > 0 && (
               <section className="space-y-3">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
@@ -530,7 +477,6 @@ export default function ArcPage() {
               </section>
             )}
 
-            {/* Predictions */}
             <PredictionsSection
               predictions={arc.predictions}
               contrarianView={arc.contrarian_view}
@@ -540,5 +486,15 @@ export default function ArcPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// ── Export (wrapped in Suspense for useSearchParams) ───────────────────────────
+
+export default function ArcPage() {
+  return (
+    <Suspense fallback={null}>
+      <ArcPageContent />
+    </Suspense>
   );
 }

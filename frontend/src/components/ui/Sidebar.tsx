@@ -12,6 +12,7 @@ import {
   Home,
   Menu,
   X,
+  Bot,
 } from "lucide-react";
 import { ServiceStatus } from "./ServiceStatus";
 import type { ServiceName } from "@/lib/api";
@@ -23,6 +24,7 @@ const NAV = [
   { href: "/feed",       label: "Feed",        icon: LayoutList, service: "feed"           },
   { href: "/briefing",   label: "Briefing",    icon: BookOpen,   service: "briefing"       },
   { href: "/arc",        label: "Story Arc",   icon: GitBranch,  service: "arc"            },
+  { href: "/agent",      label: "Agent",       icon: Bot,        service: "agent"          },
   { href: "/video",      label: "Video",       icon: Video,      service: "video"          },
 ] as const;
 

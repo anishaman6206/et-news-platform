@@ -1,157 +1,260 @@
-import Link from "next/link";
-import {
-  Globe,
-  LayoutList,
-  BookOpen,
-  GitBranch,
-  Video,
-} from "lucide-react";
-import { ServiceStatus } from "@/components/ui/ServiceStatus";
-import type { ServiceName } from "@/lib/api";
+"use client";
 
-const FEATURES = [
-  {
-    href:        "/vernacular",
-    label:       "Vernacular Engine",
-    icon:        Globe,
-    service:     "vernacular" as ServiceName,
-    description: "Translate any ET article into Hindi, Tamil, Telugu or Bengali — financial terms correctly localised automatically.",
-    accent:      "from-orange-500/20 to-orange-900/10 border-orange-700/30",
-    iconColor:   "text-orange-400",
-  },
-  {
-    href:        "/feed",
-    label:       "Personalised Feed",
-    icon:        LayoutList,
-    service:     "feed" as ServiceName,
-    description: "Personalised news feed that learns from what you read, share and skip — updates your interest profile in real time.",
-    accent:      "from-blue-500/20 to-blue-900/10 border-blue-700/30",
-    iconColor:   "text-blue-400",
-  },
-  {
-    href:        "/briefing",
-    label:       "News Navigator",
-    icon:        BookOpen,
-    service:     "briefing" as ServiceName,
-    description: "Ask any financial question and get a structured briefing sourced strictly from ET articles, with citations.",
-    accent:      "from-purple-500/20 to-purple-900/10 border-purple-700/30",
-    iconColor:   "text-purple-400",
-  },
-  {
-    href:        "/arc",
-    label:       "Story Arc Tracker",
-    icon:        GitBranch,
-    service:     "arc" as ServiceName,
-    description: "Track any ongoing business story — entity graph, sentiment trend over time, and AI predictions on what comes next.",
-    accent:      "from-green-500/20 to-green-900/10 border-green-700/30",
-    iconColor:   "text-green-400",
-  },
-  {
-    href:        "/video",
-    label:       "AI Video Studio",
-    icon:        Video,
-    service:     "video" as ServiceName,
-    description: "Turn any ET article into a broadcast-ready MP4 with AI narration in under 2 minutes.",
-    accent:      "from-red-500/20 to-red-900/10 border-red-700/30",
-    iconColor:   "text-red-400",
-  },
-];
+import { useState, useEffect, useCallback, useRef } from "react";
+import { RefreshCw, Bot } from "lucide-react";
+import { FeedSidebar } from "@/components/feed/FeedSidebar";
+import { ArticleCard } from "@/components/feed/ArticleCard";
+import { AgentActivityPanel } from "@/components/feed/AgentActivityPanel";
+import { VideoStudioPanel } from "@/components/feed/VideoStudioPanel";
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { getIngestedArticles, getFeed, translateBatch } from "@/lib/api";
+import type { IngestedArticle } from "@/lib/api";
 
-const STATS = [
-  { value: "5",  label: "Active Services"        },
-  { value: "45", label: "Tests Passing"          },
-  { value: "5",  label: "Languages Supported"    },
-  { value: "0",  label: "External Dependencies"  },
-];
+const LANG_NAMES: Record<string, string> = {
+  hi: "Hindi",
+  ta: "Tamil",
+  te: "Telugu",
+  bn: "Bengali",
+};
 
-const TECH_BADGES = [
-  "GPT-4o", "OpenAI TTS", "Embeddings", "Qdrant", "Neo4j",
-  "Redis", "PostgreSQL", "spaCy", "FFmpeg", "Next.js 14",
-];
+export default function NewsPage() {
+  const [articles, setArticles] = useState<IngestedArticle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-export default function Home() {
+  const [globalLang, setGlobalLang] = useState("en");
+  const [globalTranslations, setGlobalTranslations] = useState<
+    Record<string, string>
+  >({});
+  const [translatingGlobal, setTranslatingGlobal] = useState(false);
+
+  const translateAll = useCallback(
+    async (lang: string, arts: IngestedArticle[]) => {
+      if (lang === "en" || arts.length === 0) {
+        setGlobalTranslations({});
+        return;
+      }
+      setTranslatingGlobal(true);
+      try {
+        const items = arts.map((a) => ({
+          id: a.article_id,
+          text: a.summary ?? a.title,
+        }));
+        const res = await translateBatch(items, lang);
+        const map: Record<string, string> = {};
+        for (const t of res.translations ?? []) {
+          map[t.id] = t.translated;
+        }
+        setGlobalTranslations(map);
+      } catch {
+        // fail silently — individual article dropdowns still work
+      } finally {
+        setTranslatingGlobal(false);
+      }
+    },
+    [],
+  );
+
+  // Keep stable ref so event handlers don't go stale
+  const translateAllRef = useRef(translateAll);
+  useEffect(() => {
+    translateAllRef.current = translateAll;
+  }, [translateAll]);
+
+  const loadArticles = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      let raw: IngestedArticle[] = [];
+      let personalized = false;
+
+      // Use personalized feed when user has onboarded with a role
+      try {
+        const userId = localStorage.getItem("et_feed_user_id");
+        const profileStr = localStorage.getItem("et_feed_profile_v2");
+        const profile = profileStr
+          ? (JSON.parse(profileStr) as { role?: string })
+          : null;
+        if (userId && profile?.role) {
+          const feedData = await getFeed(userId);
+          if (feedData.articles.length > 0) {
+            raw = feedData.articles;
+            personalized = true;
+          }
+        }
+      } catch {
+        // fall through to chronological scroll
+      }
+
+      // Fallback: chronological scroll from ingestion service
+      if (!personalized) {
+        const data = await getIngestedArticles(50);
+        const fallback = Array.isArray(data)
+          ? (data as IngestedArticle[])
+          : ((data as { articles?: IngestedArticle[] }).articles ?? []);
+        // Sort descending by pub_ts only for chronological view
+        raw = [...fallback].sort((a, b) => (b.pub_ts ?? 0) - (a.pub_ts ?? 0));
+      }
+
+      setArticles(raw);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to load articles";
+      console.error("[NewsPage] fetch error:", msg);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadArticles();
+  }, [loadArticles]);
+
+  // Pick up stored preference and listen for changes dispatched by TopNav
+  useEffect(() => {
+    const stored = localStorage.getItem("et_lang_preference") ?? "en";
+    setGlobalLang(stored);
+
+    const handler = (e: Event) => {
+      const lang = (e as CustomEvent<string>).detail;
+      setGlobalLang(lang);
+    };
+    window.addEventListener("et_lang_change", handler);
+    return () => window.removeEventListener("et_lang_change", handler);
+  }, []);
+
+  // Re-translate whenever globalLang or articles change
+  useEffect(() => {
+    if (articles.length === 0) return;
+    if (globalLang !== "en") {
+      void translateAllRef.current(globalLang, articles);
+    } else {
+      setGlobalTranslations({});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [globalLang, articles]);
+
+  const handleChangeLang = () => {
+    localStorage.setItem("et_lang_preference", "en");
+    window.dispatchEvent(new CustomEvent("et_lang_change", { detail: "en" }));
+  };
+
   return (
-    <div className="max-w-5xl mx-auto space-y-10">
-      {/* Hero */}
-      <section className="pt-4">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[#FF6B35]">
-            <span className="text-lg font-black text-white tracking-tight">ET</span>
-          </div>
-          <div>
-            <h1 className="text-3xl font-black text-white leading-tight">
-              ET AI News Platform
-            </h1>
-            <p className="text-sm text-gray-500">AI-Native News Experience — ET AI Hackathon 2026</p>
-          </div>
-        </div>
-        <p className="text-gray-400 max-w-2xl text-sm leading-relaxed">
-          Five independently deployable microservices that bring personalisation, multilingual
-          access, intelligent briefings, story tracking, and AI-generated video to Economic Times
-          readers. All powered by GPT-4o.
-        </p>
-      </section>
-
-      {/* Stats bar */}
-      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {STATS.map(({ value, label }) => (
-          <div
-            key={label}
-            className="flex flex-col items-center justify-center rounded-xl border border-white/10 bg-gray-800/50 py-5 px-3 text-center"
+    <div>
+      {/* Global language banner */}
+      {globalLang !== "en" && (
+        <div className="mb-4 flex items-center justify-between rounded-xl bg-blue-950/50 border border-blue-700/40 px-4 py-2.5">
+          <span className="text-sm text-blue-300 flex items-center gap-2">
+            {translatingGlobal ? (
+              <>
+                Translating to{" "}
+                <strong>{LANG_NAMES[globalLang] ?? globalLang}</strong>
+                <LoadingSpinner size="sm" />
+              </>
+            ) : (
+              <>
+                Showing articles in{" "}
+                <strong>{LANG_NAMES[globalLang] ?? globalLang}</strong>
+              </>
+            )}
+          </span>
+          <button
+            onClick={handleChangeLang}
+            className="text-xs text-blue-400 hover:text-blue-200 transition-colors"
           >
-            <span className="text-3xl font-black text-[#FF6B35] leading-none mb-1">
-              {value}
+            Change language
+          </button>
+        </div>
+      )}
+
+      {/* 3-column layout */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "20% 1fr 25%",
+          gap: "1.5rem",
+          alignItems: "start",
+        }}
+      >
+        {/* LEFT: Feed personalisation */}
+        <aside>
+          <FeedSidebar onRefresh={loadArticles} />
+        </aside>
+
+        {/* CENTER: Article feed */}
+        <main className="min-w-0">
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <h1 className="text-lg font-bold text-white">Today&apos;s News</h1>
+            {!loading && articles.length > 0 && (
+              <span className="rounded-full bg-gray-700 px-2.5 py-0.5 text-xs text-gray-300 font-medium">
+                {articles.length}
+              </span>
+            )}
+            <span className="flex items-center gap-1 rounded-full bg-[#FF6B35]/10 border border-[#FF6B35]/20 px-2.5 py-0.5 text-xs text-[#FF6B35]">
+              <Bot className="h-3 w-3" /> Agent processing
             </span>
-            <span className="text-xs text-white font-medium">{label}</span>
+            <button
+              onClick={() => void loadArticles()}
+              disabled={loading}
+              className="ml-auto flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
+            >
+              <RefreshCw
+                className={`h-3 w-3 ${loading ? "animate-spin" : ""}`}
+              />
+              Refresh
+            </button>
           </div>
-        ))}
-      </section>
 
-      {/* Feature cards */}
-      <section>
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-4">
-          Features
-        </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map(({ href, label, icon: Icon, service, description, accent, iconColor }) => (
-            <div
-              key={href}
-              className={`relative flex flex-col rounded-xl border bg-gradient-to-br p-5 ${accent}`}
-            >
-              <div className="flex items-start justify-between mb-3">
-                <Icon className={`h-6 w-6 ${iconColor}`} />
-                <ServiceStatus service={service} showLabel={false} />
-              </div>
-
-              <h3 className="font-semibold text-white mb-1.5">{label}</h3>
-              <p className="text-xs text-gray-400 leading-relaxed flex-1 mb-4">
-                {description}
-              </p>
-
-              <Link
-                href={href}
-                className="inline-flex items-center gap-1 text-xs font-medium text-white/70 hover:text-white transition-colors"
-              >
-                Try it →
-              </Link>
+          {loading && (
+            <div className="flex items-center justify-center py-24">
+              <LoadingSpinner size="lg" />
             </div>
-          ))}
-        </div>
-      </section>
+          )}
 
-      {/* Tech stack */}
-      <section className="pb-4">
-        <div className="flex flex-wrap gap-2">
-          {TECH_BADGES.map((badge) => (
-            <span
-              key={badge}
-              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-400"
-            >
-              {badge}
-            </span>
-          ))}
-        </div>
-      </section>
+          {!loading && error && (
+            <div className="rounded-xl border border-amber-700/40 bg-amber-950/20 p-4 mb-4 space-y-1">
+              <p className="text-sm font-medium text-amber-300">
+                Starting up — ingestion pipeline is loading articles…
+              </p>
+              <p className="text-xs text-gray-500">{error}</p>
+              <button
+                onClick={() => void loadArticles()}
+                className="text-xs text-amber-400 underline hover:text-amber-200"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!loading && !error && articles.length === 0 && (
+            <div className="rounded-2xl border border-white/10 bg-gray-800/30 py-20 text-center space-y-1">
+              <p className="text-gray-400 text-sm font-medium">
+                Starting up — ingestion pipeline is loading articles…
+              </p>
+              <p className="text-gray-600 text-xs">
+                Articles will appear here once the pipeline processes its first batch.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {articles.map((article) => (
+              <ArticleCard
+                key={article.article_id}
+                article={article}
+                globalLang={globalLang}
+                globalTranslation={globalTranslations[article.article_id]}
+              />
+            ))}
+          </div>
+        </main>
+
+        {/* RIGHT: Agent + Video panels */}
+        <aside className="space-y-4 sticky top-20">
+          <AgentActivityPanel />
+          <VideoStudioPanel />
+        </aside>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,8 @@ const PROXY = {
   briefing:   "/api/briefing",
   arc:        "/api/arc",
   video:      "/api/video",
+  agent:      "/api/agent",
+  ingestion:  "/api/ingestion",
 } as const;
 
 export type ServiceName = keyof typeof PROXY;
@@ -60,7 +62,7 @@ export interface Article {
 
 export interface FeedResponse {
   user_id: string;
-  articles: Article[];
+  articles: IngestedArticle[];
 }
 
 // Briefing
@@ -118,6 +120,46 @@ export interface VideoStatusResponse {
   progress: number;
   output_path: string | null;
   error: string | null;
+  title?: string;
+  created_at?: string;
+}
+
+export interface VideoJobsResponse {
+  jobs: VideoStatusResponse[];
+}
+
+// Ingestion — matches the Qdrant payload stored by ingestion-pipeline
+export interface IngestedArticle {
+  article_id: string;
+  title: string;
+  summary?: string;
+  topic?: string;       // fallback subtitle used by some downstream services
+  source?: string;
+  pub_ts?: number | null;   // unix timestamp (seconds) — float from Python
+  pub_date?: string | null; // ISO date string
+  section?: string;
+  url?: string;
+}
+
+export interface IngestedArticlesResponse {
+  articles: IngestedArticle[];
+  total?: number;
+}
+
+// Vernacular batch
+export interface TranslateBatchItem {
+  id: string;
+  text: string;
+}
+
+export interface TranslateBatchResult {
+  id: string;
+  translated: string;
+  lang: string;
+}
+
+export interface TranslateBatchResponse {
+  translations: TranslateBatchResult[];
 }
 
 // ── API functions ──────────────────────────────────────────────────────────────
@@ -153,7 +195,7 @@ export async function onboardUser(
   return apiFetch<OnboardResponse>(`${PROXY.feed}/onboard`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, role, sectors, tickers }),
+    body: JSON.stringify({ user_id: userId, role: role.toLowerCase(), sectors, tickers }),
   });
 }
 
@@ -245,7 +287,112 @@ export async function getVideoStatus(jobId: string): Promise<VideoStatusResponse
   );
 }
 
+/** List recent video jobs (last 10, newest first). */
+export async function listVideoJobs(): Promise<VideoJobsResponse> {
+  return apiFetch<VideoJobsResponse>(`${PROXY.video}/video/jobs`);
+}
+
 /** Return the proxied download URL for a completed video job. */
 export function getVideoDownloadUrl(jobId: string): string {
   return `${PROXY.video}/video/download/${jobId}`;
+}
+
+// Agent ─────────────────────────────────────────────────────────────────────
+
+export interface AgentHealth {
+  status: string;
+  service: string;
+  last_run: number | null;
+  articles_processed_today: number;
+  tools_invoked_today: number;
+}
+
+export interface AgentDecision {
+  article_id: string;
+  article_title: string;
+  section: string;
+  decided_at: string;
+  reasoning: string;
+  tools_invoked: string[] | string;
+  tool_results: Record<string, unknown>;
+  status: "completed" | "partial" | "failed";
+  duration_ms: number;
+}
+
+export interface AgentStats {
+  total_articles_processed: number;
+  total_tools_invoked: number;
+  tools_breakdown: Record<string, number>;
+  avg_tools_per_article: number;
+  last_run_at: string | null;
+}
+
+export interface AgentRunSummary {
+  articles_processed?: number;
+  tools_invoked_total?: number;
+  decisions?: unknown[];
+  status?: string;
+  message?: string;
+}
+
+export async function getAgentHealth(): Promise<AgentHealth> {
+  return apiFetch<AgentHealth>(`${PROXY.agent}/health`);
+}
+
+export async function getAgentDecisions(
+  limit = 20,
+): Promise<{ decisions: AgentDecision[] }> {
+  return apiFetch<{ decisions: AgentDecision[] }>(
+    `${PROXY.agent}/agent/decisions?limit=${limit}`,
+  );
+}
+
+export async function getAgentStats(): Promise<AgentStats> {
+  return apiFetch<AgentStats>(`${PROXY.agent}/agent/stats`);
+}
+
+// Arc topics
+export async function getArcTopics(): Promise<{ topics: string[] }> {
+  return apiFetch<{ topics: string[] }>(`${PROXY.arc}/topics`);
+}
+
+export async function triggerAgentCycle(): Promise<AgentRunSummary> {
+  return apiFetch<AgentRunSummary>(`${PROXY.agent}/agent/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+}
+
+// Ingestion ───────────────────────────────────────────────────────────────────
+
+/** Fetch ingested articles.
+ *  Omits the section filter when section is "all" or empty — the ingestion
+ *  service would otherwise try to match a literal "all" section in Qdrant. */
+export async function getIngestedArticles(
+  limit = 50,
+  section = "all",
+): Promise<IngestedArticlesResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (section && section !== "all") params.set("section", section);
+  return apiFetch<IngestedArticlesResponse>(
+    `${PROXY.ingestion}/ingest/articles?${params}`,
+  );
+}
+
+// Vernacular batch ─────────────────────────────────────────────────────────────
+
+/** Translate multiple article snippets in a single request. */
+export async function translateBatch(
+  articles: TranslateBatchItem[],
+  lang: string,
+): Promise<TranslateBatchResponse> {
+  return apiFetch<TranslateBatchResponse>(
+    `${PROXY.vernacular}/translate/batch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ articles, lang }),
+    },
+  );
 }

@@ -94,6 +94,28 @@ Story Arc also increases stickiness for existing ET Prime subscribers — users 
 
 ---
 
+## Feature 6: Autonomous Agent
+
+**Problem:** Editorial decisions — which stories to track, when to generate explainer videos, which topics warrant a briefing — currently require constant human judgement. At 500+ articles/day, this is unsustainable. Delays in triggering video or arc processing mean content reaches readers hours late.
+
+The autonomous agent runs 24/7, reads every processed article from Kafka, and makes three editorial decisions per article using GPT-4o: update story arc, generate video, or skip. It acts in under 5 minutes from article publish — vs. 2+ hours for a human editorial cycle.
+
+| Metric | Baseline (Human) | Autonomous Agent |
+|---|---|---|
+| Articles reviewed per day | ~200 (limited by analysts) | 500+ (all articles) |
+| Time from publish to video trigger | 2–4 hours | < 5 minutes |
+| Editorial analyst FTE required | 3 (content ops) | 0 for routine decisions |
+| Cost per editorial decision | ₹200 (5 min @ ₹2,400/hr) | ₹2 (GPT-4o-mini API) |
+| Annual editorial ops saving (500 articles/day × 3 decisions × ₹198 saving) | — | **₹10.8 Cr** |
+
+| Additional value | Value |
+|---|---|
+| 24/7 processing — no weekend/holiday coverage gaps | Qualitative |
+| Breaking news arc tracking within minutes of first article | Competitive advantage |
+| Conservative annual ops saving | **₹10 Cr** |
+
+---
+
 ## Summary
 
 | Feature | Impact Type | Annual Value |
@@ -103,9 +125,10 @@ Story Arc also increases stickiness for existing ET Prime subscribers — users 
 | News Navigator | Churn reduction + B2B API | ₹31 Cr |
 | Story Arc Tracker | New premium tier ARR | ₹5 Cr |
 | AI Video Studio | Cost saving + content revenue | ₹110 Cr |
-| **Total** | | **₹325 Cr (~$39M USD)** |
+| Autonomous Agent | Editorial ops cost saving | ₹10 Cr |
+| **Total** | | **₹335 Cr (~$40M USD)** |
 
-At an estimated total API cost of under ₹5 Cr/year across all five features, the platform delivers roughly **65× return on AI infrastructure spend**.
+At an estimated total API cost of under ₹5 Cr/year across all features, the platform delivers roughly **67× return on AI infrastructure spend**.
 
 ---
 
@@ -118,3 +141,4 @@ At an estimated total API cost of under ₹5 Cr/year across all five features, t
 - Market size and language preference data from IAMAI India Internet Report 2025
 - ET readership and Prime subscriber figures from publicly reported ET Group media kit data
 - Session time and personalisation uplift benchmarks from Nielsen and McKinsey digital media studies
+- Editorial analyst cost based on ₹2,400/hr blended rate for mid-level content operations staff

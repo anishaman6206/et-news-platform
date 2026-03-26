@@ -3,7 +3,8 @@
 ### AI-Native News Experience — PS8 Submission · ET AI Hackathon 2026
 
 An AI-powered microservices platform for Economic Times that delivers personalisation,
-multilingual access, intelligent briefings, story tracking, and AI-generated video to ET readers.
+multilingual access, intelligent briefings, story tracking, AI-generated video, and autonomous
+editorial agent processing to ET readers.
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
@@ -19,13 +20,13 @@ multilingual access, intelligent briefings, story tracking, and AI-generated vid
 
 > 🎥 **[Watch the 3-minute pitch video](#)** *(link will be added before submission)*
 
-| Home Dashboard | Vernacular Engine | News Navigator |
+| News Feed | Story Arc | ET News Agent |
 |---|---|---|
-| ![Home](screenshots/home.png) | ![Vernacular](screenshots/vernacular.png) | ![Briefing](screenshots/briefing.png) |
+| ![Feed](screenshots/home.png) | ![Arc](screenshots/arc.png) | ![Agent](screenshots/agent.png) |
 
-| Personalised Feed | Story Arc Tracker | AI Video Studio |
+| AI Briefing | AI Video Studio | Hindi Translation |
 |---|---|---|
-| ![Feed](screenshots/feed.png) | ![Arc](screenshots/arc.png) | ![Video](screenshots/video.png) |
+| ![Briefing](screenshots/briefing.png) | ![Video](screenshots/video.png) | ![Hindi](screenshots/home.png) |
 
 > 📸 *Screenshots will be added before final submission*
 
@@ -35,11 +36,13 @@ multilingual access, intelligent briefings, story tracking, and AI-generated vid
 
 | # | Feature | Service | Status |
 |---|---|---|---|
-| 1 | **Vernacular Engine** — translate ET articles to Hindi, Tamil, Telugu, Bengali | `feature-vernacular` | ✅ Done |
-| 2 | **Personalised Feed** — rank articles by reader interest using semantic similarity | `feature-feed` | ✅ Done |
-| 3 | **News Navigator** — RAG-powered briefings: ask any financial question, get sourced answers | `feature-briefing` | ✅ Done |
-| 4 | **Story Arc Tracker** — NER + entity knowledge graph + sentiment trends over time | `feature-arc` | ✅ Done |
-| 5 | **AI Video Studio** — auto-generate broadcast-style MP4 videos via GPT-4o + OpenAI TTS | `feature-video` | ✅ Done |
+| 1 | **Vernacular Engine** — translate ET articles to Hindi, Tamil, Telugu, Bengali | `feature-vernacular` | Done |
+| 2 | **Personalised Feed** — rank articles by reader interest using semantic similarity + EMA | `feature-feed` | Done |
+| 3 | **News Navigator** — RAG briefings + streaming article-context Q&A | `feature-briefing` | Done |
+| 4 | **Story Arc Tracker** — NER + entity knowledge graph + sentiment trends over time | `feature-arc` | Done |
+| 5 | **AI Video Studio** — auto-generate broadcast-style MP4 videos via GPT-4o + OpenAI TTS | `feature-video` | Done |
+| 6 | **Ingestion Pipeline** — Kafka consumer → OpenAI embed → Qdrant upsert | `ingestion-pipeline` | Done |
+| 7 | **Autonomous Agent** — reads every article, decides arc/video actions, runs 24/7 | `agent` | Done |
 
 ---
 
@@ -72,12 +75,10 @@ chmod +x start-all.sh && ./start-all.sh
 
 The ET AI News Platform is an AI-native microservices system built for Economic Times,
 delivering personalisation, multilingual access, intelligent briefings, story tracking,
-and AI-generated video to ET readers. Five independently deployable services share a
-common infrastructure layer (Qdrant, Redis, Neo4j, PostgreSQL, Kafka) and route all
-LLM calls through a single shared client (`shared/llm_client.py`) backed by the OpenAI API.
-
-> **Note:** `api-server` and `ingestion-pipeline` are architected but not implemented
-> in this hackathon submission. The frontend calls feature services directly for the demo.
+AI-generated video, and autonomous agent processing to ET readers. Seven independently
+deployable services share a common infrastructure layer (Qdrant, Redis, Neo4j, PostgreSQL,
+Kafka) and route all LLM calls through a single shared client (`shared/llm_client.py`)
+backed by the OpenAI API.
 
 ### System Diagram
 
@@ -85,7 +86,12 @@ LLM calls through a single shared client (`shared/llm_client.py`) backed by the 
 flowchart TD
   User([User / Client])
 
-  subgraph Services
+  subgraph Pipeline[Article Pipeline]
+    Ingest[ingestion-pipeline\nport 8006]
+    Agent[agent\nport 8007]
+  end
+
+  subgraph Services[Feature Services]
     V[feature-vernacular\nport 8005]
     F[feature-feed\nport 8011]
     B[feature-briefing\nport 8002]
@@ -102,17 +108,24 @@ flowchart TD
   end
 
   subgraph Shared[shared/]
-    LLM[llm_client.py\ncomplete · embed · tts]
+    LLM[llm_client.py\ncomplete · complete_stream · embed · tts]
     VS[vector_store.py\nupsert · search]
     KC[kafka_client.py\nproduce · consume]
   end
 
   OpenAI([OpenAI API\nGPT-4o · TTS · Embeddings])
 
-  User -->|GET /translate| V
+  Kafka -->|raw-articles| Ingest
+  Ingest -->|embed + upsert| Qdrant
+  Ingest -->|processed-articles| Kafka
+  Kafka -->|processed-articles| Agent
+  Agent -->|POST /arc/process| A
+  Agent -->|POST /video/generate| VD
+
+  User -->|GET /translate/batch| V
   User -->|GET /feed · POST /onboard · POST /engage| F
   User -->|POST /briefing/generate · /ask| B
-  User -->|POST /arc/process · GET /arc/topic| A
+  User -->|GET /arc/topic| A
   User -->|POST /video/generate · GET /video/status| VD
 
   V --> Redis
@@ -130,6 +143,7 @@ flowchart TD
   B --> VS
   A --> LLM
   VD --> LLM
+  Agent --> LLM
 
   VS --> Qdrant
   KC --> Kafka
@@ -140,9 +154,11 @@ flowchart TD
 
 | Service | Port | Key Technologies | Purpose |
 |---|---|---|---|
+| `ingestion-pipeline` | 8006 | Kafka, Qdrant, text-embedding-3-small | Consumes raw-articles, embeds with OpenAI, upserts to Qdrant |
+| `agent` | 8007 | GPT-4o, Kafka, REST | Autonomous agent: reads articles, decides arc/video actions |
 | `feature-vernacular` | 8005 | GPT-4o, Redis (L1+L2 cache) | EN → 8 Indian language translation with financial glossary |
 | `feature-feed` | 8011 | Qdrant, Redis, OpenAI Embeddings | Personalised article ranking via semantic similarity + EMA |
-| `feature-briefing` | 8002 | Qdrant, Redis, GPT-4o | RAG briefings with RRF retrieval, dedup, SSE streaming |
+| `feature-briefing` | 8002 | Qdrant, Redis, GPT-4o | RAG briefings with RRF retrieval, dedup, token-by-token SSE |
 | `feature-arc` | 8004 | spaCy, Neo4j, PostgreSQL, GPT-4o-mini | NER → entity graph → sentiment timeline → AI predictions |
 | `feature-video` | 8003 | GPT-4o, OpenAI TTS, FFmpeg, Pillow | Scene manifest → TTS audio → Pillow frames → MP4 |
 
@@ -154,7 +170,7 @@ flowchart TD
 | **Feed** | User signal → EMA vector update (α=0.15) → Qdrant ANN (top 200) → rerank (cosine + recency + diversity) → top 20 |
 | **Briefing** | Topic query → RRF merge (semantic + keyword) → Jaccard dedup (0.60) → GPT-4o → structured JSON + source citations + SSE |
 | **Arc** | Article → spaCy NER + alias resolution → Neo4j MERGE → GPT-4o-mini sentiment → PostgreSQL → GPT-4o predictions |
-| **Video** | Article → GPT-4o scene manifest → OpenAI TTS per scene + Pillow PNG frames → pydub concat → FFmpeg → MP4 |
+| **Video** | Article → GPT-4o scene manifest → OpenAI TTS per scene + Pillow PNG frames → FFmpeg concat demuxer → MP4 |
 
 ### Error Handling
 
@@ -170,8 +186,9 @@ flowchart TD
 ```
 et-news-platform/
 ├── services/
-│   ├── ingestion-pipeline/   # Kafka consumer → embed → Qdrant  (production — demo uses direct calls)
-│   ├── api-server/           # FastAPI gateway, port 8000        (production — demo uses direct calls)
+│   ├── ingestion-pipeline/   # Kafka consumer → embed → Qdrant, port 8006
+│   ├── agent/                # Autonomous editorial agent, port 8007
+│   ├── api-server/           # FastAPI gateway stub, port 8000
 │   ├── feature-feed/         # Personalised ranking, port 8011
 │   ├── feature-briefing/     # RAG briefings, port 8002
 │   ├── feature-video/        # AI video generation, port 8003
@@ -204,8 +221,8 @@ et-news-platform/
 | **Relational DB** | PostgreSQL + TimescaleDB | Sentiment time-series, article metadata |
 | **Message Queue** | Kafka | Article ingestion pipeline events |
 | **NLP** | spaCy en_core_web_sm | Named entity recognition |
-| **Video** | FFmpeg + Pillow + pydub | Frame rendering, audio synthesis, MP4 assembly |
-| **Backend** | FastAPI + Python 3.11 | All 5 microservices |
+| **Video** | FFmpeg + Pillow | Frame rendering, audio concat (FFmpeg concat demuxer), MP4 assembly |
+| **Backend** | FastAPI + Python 3.11 | All 7 microservices |
 | **Frontend** | Next.js 14 + TypeScript + Tailwind | Dashboard UI |
 | **Infra** | Docker Compose | Local development orchestration |
 
@@ -237,9 +254,10 @@ Two one-command startup scripts are included that handle everything automaticall
 
 What it does:
 1. Starts Docker infrastructure (Qdrant, Neo4j, Redis, Kafka, PostgreSQL)
-2. Waits 20 seconds for containers to be healthy
-3. Opens 5 separate PowerShell windows for each Python service
-4. Opens a 6th window for the Next.js frontend at `http://localhost:3000`
+2. Polls Qdrant `/healthz` until healthy (up to 60 seconds), then waits 5 more seconds for Postgres and Neo4j
+3. Opens 7 separate PowerShell windows for each Python service (with FFmpeg path and env vars pre-injected)
+4. Opens an 8th window for the Next.js frontend at `http://localhost:3000`
+5. Prints all service ports at the end
 
 ### Mac / Linux (`start-all.sh`)
 
@@ -249,7 +267,7 @@ chmod +x start-all.sh
 ./start-all.sh
 ```
 
-What it does: same as above, launching all services as background processes.
+What it does: same as above — Qdrant health-check loop, FFmpeg auto-detection, all 7 Python services as background processes, port listing at the end.
 
 ---
 
@@ -274,7 +292,7 @@ et-news-platform-redis-1      Up (healthy)   0.0.0.0:6379
 
 ---
 
-## Feature 1: Vernacular Engine ✅
+## Feature 1: Vernacular Engine
 
 Translates Economic Times articles from English into Indian regional languages
 using GPT-4o with a domain-specific financial glossary.
@@ -377,7 +395,7 @@ tests/test_translator.py::TestTranslateEndpoint::test_translate_calls_pipeline  
 
 ---
 
-## Feature 2: Personalised Feed ✅
+## Feature 2: Personalised Feed 
 
 Ranks articles for each user using semantic similarity between the
 user's interest vector and article embeddings stored in Qdrant.
@@ -458,7 +476,7 @@ pytest tests/ -v
 
 ---
 
-## Feature 3: News Navigator Briefings ✅
+## Feature 3: News Navigator Briefings 
 
 RAG pipeline that synthesises multiple ET articles on a topic into a
 single structured briefing with source citations. Ask follow-up
@@ -527,7 +545,7 @@ pytest tests/ -v
 
 ---
 
-## Feature 4: Story Arc Tracker ✅
+## Feature 4: Story Arc Tracker 
 
 Tracks ongoing news stories by building an entity knowledge graph
 in Neo4j, scoring sentiment over time with GPT-4o-mini, and
@@ -604,7 +622,7 @@ pytest tests/ -v
 
 ---
 
-## Feature 5: AI Video Studio ✅
+## Feature 5: AI Video Studio 
 
 Converts any ET article into a broadcast-style MP4 video with
 AI-generated narration. GPT-4o writes the script, OpenAI TTS
@@ -615,7 +633,7 @@ the final video.
 
 1. GPT-4o generates a scene manifest: `title_card`, `narration`, `data_callout` scenes with durations totalling 45–90 seconds
 2. OpenAI TTS (tts-1, alloy voice) generates MP3 audio per scene
-3. pydub concatenates scene audio into one narration track
+3. FFmpeg concat demuxer joins scene audio into one narration track (no ffprobe dependency)
 4. Pillow renders a PNG frame per scene type
 5. FFmpeg assembles frames + audio into final MP4 via `filter_complex concat`
 6. Async job system — `POST` returns `job_id` immediately; poll `/video/status/{job_id}` for progress
@@ -634,9 +652,9 @@ flowchart LR
   Queue --> |async thread| Script[GPT-4o Script]
   Script --> |scene manifest| TTS[OpenAI TTS]
   Script --> |scene manifest| Frames[Pillow Frames]
-  TTS --> |MP3 per scene| pydub[pydub concat]
+  TTS --> |MP3 per scene| Concat[FFmpeg concat demuxer]
   Frames --> |PNG per scene| FFmpeg
-  pydub --> |narration.mp3| FFmpeg
+  Concat --> |narration.mp3| FFmpeg
   FFmpeg --> |filter_complex concat| MP4[(MP4 output)]
   User --> |GET /video/status/id| Queue
   User --> |GET /video/download/id| MP4
@@ -685,7 +703,7 @@ pytest tests/ -v
 
 ## 🌐 Frontend
 
-Next.js 14 dashboard with pages for all 5 features.
+Next.js 14 dashboard with a unified home feed and dedicated pages for Arc, Video, and Agent.
 
 ### Run the frontend
 
@@ -702,14 +720,12 @@ npm run dev
 
 ### Pages
 
-| Page | URL | Feature |
+| Page | URL | What's here |
 |---|---|---|
-| Home | `/` | Service health dashboard |
-| Vernacular | `/vernacular` | Translate articles to Hindi/Tamil/Telugu/Bengali |
-| Feed | `/feed` | Personalised article feed with engagement tracking |
-| Briefing | `/briefing` | AI briefings with source citations and Q&A |
-| Story Arc | `/arc` | Entity graph, sentiment timeline, predictions |
-| Video Studio | `/video` | Generate broadcast MP4 videos from articles |
+| Home | `/` | Article feed, personalisation sidebar, translation, briefing Q&A, video buttons, agent activity panel |
+| Story Arc | `/arc` | Entity graph, sentiment timeline, AI predictions |
+| Video Studio | `/video` | Browse and download AI-generated MP4 videos |
+| Agent | `/agent` | Live agent decision log |
 
 > 📸 *Screenshot: Home dashboard*
 > ![Home](screenshots/home.png)
@@ -718,7 +734,7 @@ npm run dev
 
 ## All Services Running (Manual)
 
-To run all 5 features simultaneously without the startup script:
+To run all 7 services simultaneously without the startup script:
 
 ```bash
 # Terminal 1 — infrastructure
@@ -738,6 +754,12 @@ cd services/feature-arc && uvicorn main:app --port 8004
 
 # Terminal 6 — video (port 8003)
 cd services/feature-video && uvicorn main:app --port 8003
+
+# Terminal 7 — ingestion pipeline (port 8006)
+cd services/ingestion-pipeline && uvicorn main:app --port 8006
+
+# Terminal 8 — autonomous agent (port 8007)
+cd services/agent && uvicorn main:app --port 8007
 ```
 
 ---
@@ -746,6 +768,8 @@ cd services/feature-video && uvicorn main:app --port 8003
 
 | Service | Port | Docs URL |
 |---|---|---|
+| Ingestion Pipeline | 8006 | http://localhost:8006/docs |
+| Autonomous Agent | 8007 | http://localhost:8007/docs |
 | Vernacular Engine | 8005 | http://localhost:8005/docs |
 | Personalised Feed | 8011 | http://localhost:8011/docs |
 | News Navigator | 8002 | http://localhost:8002/docs |
@@ -763,7 +787,7 @@ cp .env.example .env
 
 | Variable | Required | Description | Default |
 |---|---|---|---|
-| `OPENAI_API_KEY` | ✅ Yes | OpenAI API key for GPT-4o, embeddings, TTS | — |
+| `OPENAI_API_KEY` | Yes | OpenAI API key for GPT-4o, embeddings, TTS | — |
 | `QDRANT_URL` | Local default | Qdrant vector DB URL | `http://localhost:6333` |
 | `REDIS_HOST` | Local default | Redis host | `localhost` |
 | `DATABASE_URL` | Local default | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/etnews` |
@@ -781,7 +805,7 @@ All Python services import from here — no duplicated SDK setup across services
 
 | Module | Used By | Purpose |
 |---|---|---|
-| `llm_client.py` | All services | `complete()` (GPT-4o/mini), `embed()` (text-embedding-3-small), `tts()` (tts-1), `transcribe()` (whisper-1) |
+| `llm_client.py` | All services | `complete()` (GPT-4o/mini), `complete_stream()` (token-by-token SSE), `embed()` (text-embedding-3-small), `tts()` (tts-1), `transcribe()` (whisper-1) |
 | `vector_store.py` | feature-feed, feature-briefing | Qdrant `upsert()` / `search()` with auto collection creation |
 | `kafka_client.py` | ingestion-pipeline | `produce()` / `consume()` generator |
 | `data/entity_aliases.json` | feature-arc | Canonical entity name map (RBI → Reserve Bank of India, etc.) |
@@ -793,13 +817,13 @@ All Python services import from here — no duplicated SDK setup across services
 
 | Item | Status |
 |---|---|
-| GitHub Repository | ✅ Public, source code complete |
-| README with setup instructions | ✅ This document |
-| Commit history showing build process | ✅ 42+ commits with feat/fix/test/docs pattern |
+| GitHub Repository | Public, source code complete |
+| README with setup instructions | This document |
+| Commit history showing build process | 42+ commits with feat/fix/test/docs pattern |
 | 3-minute pitch video | ⏳ Recording in progress |
-| Architecture document | ✅ ARCHITECTURE.md |
-| Impact model | ✅ IMPACT_MODEL.md — ₹325 Cr annual impact |
+| Architecture document | ARCHITECTURE.md |
+| Impact model | IMPACT_MODEL.md — ₹335 Cr annual impact |
 
-**Team:** Anish Aman
+**Team:** Chandrika
 **Problem Statement:** PS8 — AI-Native News Experience
 **Hackathon:** ET AI Hackathon 2026

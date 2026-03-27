@@ -154,7 +154,7 @@ flowchart TD
 |---|---|---|---|
 | `ingestion-pipeline` | 8006 | Kafka, Qdrant, text-embedding-3-small | Consumes raw-articles, embeds with OpenAI, upserts to Qdrant |
 | `agent` | 8007 | GPT-4o, Kafka, REST | Autonomous agent: reads articles, decides arc/video actions |
-| `feature-vernacular` | 8005 | GPT-4o, Redis (L1+L2 cache) | EN → 8 Indian language translation with financial glossary |
+| `feature-vernacular` | 8005 | GPT-4o, Redis (L1+L2 cache) | EN → 4 Indian language translation with financial glossary |
 | `feature-feed` | 8011 | Qdrant, Redis, OpenAI Embeddings | Personalised article ranking via semantic similarity + EMA |
 | `feature-briefing` | 8002 | Qdrant, Redis, GPT-4o | RAG briefings with RRF retrieval, dedup, token-by-token SSE |
 | `feature-arc` | 8004 | spaCy, Neo4j, PostgreSQL, GPT-4o-mini | NER → entity graph → sentiment timeline → AI predictions |
@@ -295,8 +295,7 @@ et-news-platform-redis-1      Up (healthy)   0.0.0.0:6379
 Translates Economic Times articles from English into Indian regional languages
 using GPT-4o with a domain-specific financial glossary.
 
-**Supported languages:** Hindi (`hi`), Tamil (`ta`), Telugu (`te`), Bengali (`bn`),
-Marathi (`mr`), Gujarati (`gu`), Kannada (`kn`), Malayalam (`ml`)
+**Supported languages:** Hindi (`hi`), Tamil (`ta`), Telugu (`te`), Bengali (`bn`)
 
 **How it works:**
 

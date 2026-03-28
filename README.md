@@ -18,7 +18,7 @@ editorial agent processing to ET readers.
 
 ## Demo
 
-> 🎥 **[Watch the 3-minute pitch video](#)** *(link will be added before submission)*
+> 🎥 **[Watch the demo pitch video](https://drive.google.com/file/d/1h6-vdI9lkImzxV8cbhiLl6g9z6tVK1_k/view?usp=sharing)**
 
 | News Feed | Story Arc | ET News Agent |
 |---|---|---|
@@ -55,7 +55,19 @@ cd et-news-platform
 cp .env.example .env
 # Edit .env and set OPENAI_API_KEY=sk-proj-...
 
-# 3. Start everything
+# 3. Install Python dependencies for each service
+pip install -r services/ingestion-pipeline/requirements.txt
+pip install -r services/agent/requirements.txt
+pip install -r services/feature-vernacular/requirements.txt
+pip install -r services/feature-feed/requirements.txt
+pip install -r services/feature-briefing/requirements.txt
+pip install -r services/feature-arc/requirements.txt
+pip install -r services/feature-video/requirements.txt
+
+# 4. Install frontend dependencies
+cd frontend && npm install && cd ..
+
+# 5. Start everything
 # Windows
 .\start-all.ps1 -ApiKey "sk-proj-..."
 
@@ -63,7 +75,7 @@ cp .env.example .env
 export OPENAI_API_KEY=sk-proj-...
 chmod +x start-all.sh && ./start-all.sh
 
-# 4. Open the dashboard
+# 6. Open the dashboard
 # http://localhost:3000
 ```
 
@@ -154,7 +166,7 @@ flowchart TD
 |---|---|---|---|
 | `ingestion-pipeline` | 8006 | Kafka, Qdrant, text-embedding-3-small | Consumes raw-articles, embeds with OpenAI, upserts to Qdrant |
 | `agent` | 8007 | GPT-4o, Kafka, REST | Autonomous agent: reads articles, decides arc/video actions |
-| `feature-vernacular` | 8005 | GPT-4o, Redis (L1+L2 cache) | EN → 4 Indian language translation with financial glossary |
+| `feature-vernacular` | 8005 | GPT-4o, Redis (L1+L2 cache) | EN → 8 Indian language translation with financial glossary |
 | `feature-feed` | 8011 | Qdrant, Redis, OpenAI Embeddings | Personalised article ranking via semantic similarity + EMA |
 | `feature-briefing` | 8002 | Qdrant, Redis, GPT-4o | RAG briefings with RRF retrieval, dedup, token-by-token SSE |
 | `feature-arc` | 8004 | spaCy, Neo4j, PostgreSQL, GPT-4o-mini | NER → entity graph → sentiment timeline → AI predictions |
@@ -295,7 +307,8 @@ et-news-platform-redis-1      Up (healthy)   0.0.0.0:6379
 Translates Economic Times articles from English into Indian regional languages
 using GPT-4o with a domain-specific financial glossary.
 
-**Supported languages:** Hindi (`hi`), Tamil (`ta`), Telugu (`te`), Bengali (`bn`)
+**Supported languages:** Hindi (`hi`), Tamil (`ta`), Telugu (`te`), Bengali (`bn`),
+Marathi (`mr`), Gujarati (`gu`), Kannada (`kn`), Malayalam (`ml`)
 
 **How it works:**
 
@@ -816,8 +829,8 @@ All Python services import from here — no duplicated SDK setup across services
 |---|---|
 | GitHub Repository | Public, source code complete |
 | README with setup instructions | This document |
-| Commit history showing build process | 42+ commits with feat/fix/test/docs pattern |
-| 3-minute pitch video | ⏳ Recording in progress |
+| Commit history showing build process | 55+ commits with feat/fix/test/docs pattern |
+| Demo pitch video | [Watch on Google Drive](https://drive.google.com/file/d/1h6-vdI9lkImzxV8cbhiLl6g9z6tVK1_k/view?usp=sharing) |
 | Architecture document | ARCHITECTURE.md |
 | Impact model | IMPACT_MODEL.md — ₹335 Cr annual impact |
 
